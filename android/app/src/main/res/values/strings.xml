@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KSIT FIND</string>
+    <string name="title_activity_main">KSIT FIND</string>
+    <string name="package_name">com.ksit.find</string>
+    <string name="custom_url_scheme">com.ksit.find</string>
+</resources>

@@ -1,6 +1,72 @@
 import { useEffect, useState, type ReactNode } from "react"
+import {
+  type ClaimDto,
+  type ClaimMessageDto,
+  type ItemDto,
+  type UserDto,
+  clearAuthToken,
+  completeHandover,
+  createItem,
+  getAdminStats,
+  getAdminUsers,
+  getAuthToken,
+  getClaimById,
+  getClaimMessages,
+  getAdminClaims,
+  getAdminItems,
+  getCurrentUser,
+  getItemById,
+  getItems,
+  getMyClaims,
+  getMyItems,
+  markNotificationRead,
+  getNotifications,
+  getUnreadNotificationCount,
+  getUserProfile,
+  loginUser,
+  markAllNotificationsRead,
+  registerUser,
+  setAuthToken,
+  submitClaim,
+  sendClaimMessage,
+  updateClaimStatus,
+  updateUserProfile,
+  setAdminItemStatus,
+  updateAdminUserRole,
+  resolveMediaUrl,
+  uploadImage,
+  reportItem,
+} from './api'
 
-type Screen = "splash" | "login" | "home" | "search" | "lost-item" | "lost-details" | "review" | "success" | "found" | "item" | "match" | "verify" | "claim" | "chat" | "handover" | "returned" | "reports" | "notifications" | "profile" | "admin" | "admin-items" | "admin-claim" | "admin-handover" | "analytics" | "privacy"
+type Screen = "splash" | "login" | "home" | "search" | "lost-item" | "lost-details" | "review" | "success" | "found" | "item" | "match" | "verify" | "claim" | "chat" | "handover" | "returned" | "reports" | "notifications" | "profile" | "admin" | "admin-items" | "admin-users" | "admin-claim" | "admin-handover" | "analytics" | "privacy"
+
+type ReportDraft = {
+  category: string
+  itemName: string
+  brand: string
+  color: string
+  location: string
+  date: string
+  time: string
+  description: string
+  privateDetails: string
+  currentLocation: string
+  imageUrls: string[]
+}
+
+const emptyReportDraft: ReportDraft = {
+  category: '',
+  itemName: '',
+  brand: '',
+  color: '',
+  location: '',
+  date: '',
+  time: '',
+  description: '',
+  privateDetails: '',
+  currentLocation: '',
+  imageUrls: [],
+}
 
 type IconName = "box" | "search" | "bell" | "user" | "home" | "file" | "pin" | "calendar" | "clock" | "camera" | "chevron" | "shield" | "message" | "check" | "target" | "warning" | "menu" | "settings" | "logout" | "chart" | "users" | "close" | "send" | "arrow" | "lock"
 
@@ -237,6 +303,7 @@ function Modal({
   onAction,
   onClose,
   destructive,
+  content,
 }: {
   icon: IconName
   title: string
@@ -245,6 +312,7 @@ function Modal({
   onAction: () => void
   onClose: () => void
   destructive?: boolean
+  content?: ReactNode
 }) {
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -260,6 +328,7 @@ function Modal({
         </div>
         <div className="modal-title">{title}</div>
         <p>{copy}</p>
+        {content}
         <div className="modal-actions">
           <Button variant="secondary" onClick={onClose}>
             CANCEL
@@ -339,6 +408,9 @@ function Field({
   icon,
   multiline,
   privateField,
+  onChange,
+  type = "text",
+  editable = false,
 }: {
   label: string
   value?: string
@@ -346,6 +418,9 @@ function Field({
   icon?: IconName
   multiline?: boolean
   privateField?: boolean
+  onChange?: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void
+  type?: string
+  editable?: boolean
 }) {
   return (
     <div className="field-wrap">
@@ -359,10 +434,32 @@ function Field({
       </div>
       <div className={`field ${multiline ? "field-multiline" : ""}`}>
         {icon && <Icon name={icon} size="sm" />}
-        <span className={value ? "" : "placeholder"}>
-          {value || placeholder}
-        </span>
-        {!multiline && !icon && <Icon name="chevron" size="sm" />}
+        {editable ? (
+          multiline ? (
+            <textarea
+              value={value ?? ""}
+              placeholder={placeholder}
+              onChange={onChange}
+              rows={4}
+              className="field-input field-textarea"
+            />
+          ) : (
+            <input
+              type={type}
+              value={value ?? ""}
+              placeholder={placeholder}
+              onChange={onChange}
+              className="field-input"
+            />
+          )
+        ) : (
+          <>
+            <span className={value ? "" : "placeholder"}>
+              {value || placeholder}
+            </span>
+            {!multiline && !icon && <Icon name="chevron" size="sm" />}
+          </>
+        )}
       </div>
     </div>
   )
@@ -425,7 +522,7 @@ function TopBar({
   )
 }
 
-const navItems: Array<{ key: Screen label: string icon: IconName }> = [
+const navItems: Array<{ key: Screen; label: string; icon: IconName }> = [
   { key: "home", label: "Home", icon: "home" },
   { key: "search", label: "Search", icon: "search" },
   { key: "reports", label: "Reports", icon: "file" },
@@ -475,38 +572,45 @@ function Progress({ step }: { step: number }) {
   )
 }
 
-function StatusTimeline({ active = 3 }: { active?: number }) {
-  const items = [
-    "Claim submitted",
-    "Identity verified",
-    "Admin reviewing claim",
-    "Handover scheduled",
-    "Item returned",
+function StatusTimeline({ status }: { status: ClaimDto['status'] }) {
+  const stages = [
+    { label: 'Claim submitted', state: 'complete' },
+    status === 'REJECTED'
+      ? { label: 'Claim rejected', state: 'current' }
+      : status === 'CANCELLED'
+        ? { label: 'Claim cancelled', state: 'current' }
+        : { label: 'Under review', state: status === 'PENDING' ? 'current' : 'complete' },
+    ...(status === 'APPROVED' ? [{ label: 'Handover pending', state: 'current' }] : []),
   ]
   return (
     <div className="timeline">
-      {items.map((item, index) => (
+      {stages.map(({ label, state }) => {
+        const complete = state === 'complete'
+        const current = state === 'current'
+        return (
         <div
           className={`timeline-row ${
-            index < active ? "complete" : index === active ? "current" : ""
+            complete ? "complete" : current ? "current" : ""
           }`}
-          key={item}
+          key={label}
         >
           <div className="timeline-marker">
-            {index < active ? <Icon name="check" size="sm" /> : ""}
+            {complete ? <Icon name="check" size="sm" /> : ""}
           </div>
           <div>
-            <div className="timeline-label">{item}</div>
+            <div className="timeline-label">{label}</div>
             <div className="timeline-meta">
-              {index < active
+              {complete
                 ? "Completed"
-                : index === active
+                : current && status !== 'REJECTED' && status !== 'CANCELLED'
                   ? "In progress"
-                  : "Pending"}
+                  : status === 'REJECTED' || status === 'CANCELLED'
+                    ? status
+                    : "Pending"}
             </div>
           </div>
         </div>
-      ))}
+      )})}
     </div>
   )
 }
@@ -521,31 +625,69 @@ const itemImages: Record<string, string> = {
 function ItemVisual({
   kind = "airpods",
   large = false,
+  imageUrl,
 }: {
   kind?: string
   large?: boolean
+  imageUrl?: string
 }) {
   return (
     <div
       className={`item-visual ${large ? "item-visual-large" : ""}`}
       style={{ background: itemImages[kind] }}
     >
-      <div className={`object-shape object-${kind}`}>
-        {kind === "airpods" ? (
-          <>
-            <span />
-            <span />
-          </>
-        ) : (
-          <Icon
-            name={
-              kind === "keys" ? "settings" : kind === "phone" ? "search" : "box"
-            }
-            size={large ? "xl" : "lg"}
-          />
-        )}
-      </div>
+      {imageUrl ? (
+        <img className="item-photo" src={resolveMediaUrl(imageUrl)} alt={kind} />
+      ) : (
+        <div className={`object-shape object-${kind}`}>
+          {kind === "airpods" ? (
+            <>
+              <span />
+              <span />
+            </>
+          ) : (
+            <Icon
+              name={
+                kind === "keys" ? "settings" : kind === "phone" ? "search" : "box"
+              }
+              size={large ? "xl" : "lg"}
+            />
+          )}
+        </div>
+      )}
     </div>
+  )
+}
+
+function ImageUploadField({ value, onUploaded }: { value?: string; onUploaded: (url: string) => void }) {
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setError('')
+    try {
+      const response = await uploadImage(file)
+      onUploaded(response.url)
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload this image.')
+    } finally {
+      setUploading(false)
+      event.target.value = ''
+    }
+  }
+
+  return (
+    <>
+      <label className="photo-drop photo-upload">
+        <input className="upload-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleChange} disabled={uploading} />
+        {value ? <img className="upload-preview" src={resolveMediaUrl(value)} alt="Uploaded item" /> : <Icon name="camera" size="lg" />}
+        <strong>{uploading ? 'Uploading photo...' : value ? 'Change photo' : '+ Add Photo'}</strong>
+        <span>{error || 'JPEG, PNG, WebP or GIF • max 10 MB'}</span>
+      </label>
+    </>
   )
 }
 
@@ -554,6 +696,7 @@ function ItemCard({
   name,
   location,
   date,
+  imageUrl,
   status = "FOUND",
   tone = "green",
   onClick,
@@ -562,13 +705,14 @@ function ItemCard({
   name: string
   location: string
   date: string
+  imageUrl?: string
   status?: string
   tone?: "red" | "green" | "orange" | "blue" | "gray"
   onClick?: () => void
 }) {
   return (
     <Card className="item-card" onClick={onClick}>
-      <ItemVisual kind={kind} />
+      <ItemVisual kind={kind} imageUrl={imageUrl} />
       <div className="item-card-copy">
         <div className="item-row">
           <div className="item-name">{name}</div>
@@ -646,6 +790,36 @@ function Splash({ go }: { go: (s: Screen) => void }) {
 }
 
 function Login({ go }: { go: (s: Screen) => void }) {
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [name, setName] = useState("")
+  const [phone, setPhone] = useState("")
+  const [registering, setRegistering] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
+
+  const handleLogin = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    setError("")
+    try {
+      const result = registering
+        ? await registerUser({
+            name: name.trim(),
+            email: email.trim(),
+            password,
+            phone: phone.trim() || undefined,
+          })
+        : await loginUser(email.trim(), password)
+      setAuthToken(result.token)
+      go("home")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
     <div className="login-screen">
       <div className="login-hero">
@@ -673,22 +847,39 @@ function Login({ go }: { go: (s: Screen) => void }) {
         <div className="login-mobile-brand">
           <Brand />
         </div>
-        <div className="eyebrow">WELCOME BACK</div>
-        <div className="page-title">Welcome to KSIT FIND</div>
+        <div className="eyebrow">{registering ? "JOIN KSIT FIND" : "WELCOME BACK"}</div>
+        <div className="page-title">{registering ? "Create your account" : "Welcome to KSIT FIND"}</div>
         <p className="page-subtitle">
-          Sign in with your KSIT account to continue.
+          {registering ? "Register with your KSIT account to get started." : "Sign in with your KSIT account to continue."}
         </p>
         <div className="form-stack">
-          <Field label="College Email" value="rahul.kumar@ksit.edu.in" />
-          <Field label="Password" value="••••••••••" />
-          <div className="form-link">Forgot Password?</div>
-          <Button onClick={() => go("home")}>LOGIN</Button>
-          <div className="divider">
-            <span>OR</span>
+          {registering && (
+            <>
+              <Field label="Full name" value={name} placeholder="Your name" editable onChange={(event) => setName(event.target.value)} />
+              <Field label="Phone (optional)" value={phone} placeholder="Phone number" editable onChange={(event) => setPhone(event.target.value)} />
+            </>
+          )}
+          <Field
+            label="College Email"
+            value={email}
+            placeholder="you@ksit.edu.in"
+            editable
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          <Field
+            label="Password"
+            value={password}
+            placeholder="Enter password"
+            type="password"
+            editable
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          {error && <div className="form-error">{error}</div>}
+          {!registering && <div className="form-link">Forgot Password?</div>}
+          <Button onClick={handleLogin}>{submitting ? "PLEASE WAIT..." : registering ? "CREATE ACCOUNT" : "LOGIN"}</Button>
+          <div className="form-link" role="button" onClick={() => { setRegistering(!registering); setError("") }}>
+            {registering ? "Already registered? Sign in" : "New to KSIT FIND? Create an account"}
           </div>
-          <Button variant="secondary" icon="shield" onClick={() => go("home")}>
-            Continue with KSIT Account
-          </Button>
         </div>
         <div className="help-row">Need Help?</div>
         <div className="secure-note">
@@ -702,7 +893,36 @@ function Login({ go }: { go: (s: Screen) => void }) {
   )
 }
 
-function Home({ go }: { go: (s: Screen) => void }) {
+function Home({ go, onSelectItem }: { go: (s: Screen) => void; onSelectItem: (id: string) => void }) {
+  const [items, setItems] = useState<ItemDto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [userName, setUserName] = useState('there')
+  const [notificationCount, setNotificationCount] = useState<number>(0)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const loadPage = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const [user, itemResponse, unread] = await Promise.all([
+          getUserProfile(),
+          getItems({ page: 0, size: 5 }),
+          getUnreadNotificationCount(),
+        ])
+        setUserName(user.name.split(' ')[0] || 'there')
+        setItems(itemResponse.content ?? [])
+        setNotificationCount(unread)
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load the home feed.')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadPage()
+  }, [])
+
   return (
     <MobilePage current="home" go={go}>
       <div className="home-header">
@@ -715,17 +935,17 @@ function Home({ go }: { go: (s: Screen) => void }) {
               onClick={() => go("notifications")}
             >
               <Icon name="bell" />
-              <span />
+              {notificationCount > 0 && <span />}
             </div>
             <div className="avatar" role="button" onClick={() => go("profile")}>
-              RK
+              {userName.slice(0, 1).toUpperCase()}
             </div>
           </div>
         </div>
         <div className="greeting">
-          <div className="eyebrow">THURSDAY, 2 OCTOBER</div>
+          <div className="eyebrow">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long' }).toUpperCase()}</div>
           <div className="page-title">
-            Good morning, Rahul <span aria-label="wave">👋</span>
+            Welcome, {userName} <span aria-label="wave">👋</span>
           </div>
           <p>Find what you&apos;ve lost. Return what you&apos;ve found.</p>
         </div>
@@ -764,43 +984,31 @@ function Home({ go }: { go: (s: Screen) => void }) {
             </div>
           </Card>
         </div>
-        <div className="match-banner" role="button" onClick={() => go("match")}>
-          <div className="match-icon">
-            <Icon name="target" />
-          </div>
-          <div>
-            <strong>We found a possible match</strong>
-            <span>Your AirPods report has a new match</span>
-          </div>
-          <Icon name="chevron" />
-        </div>
         <SectionTitle
           title="RECENTLY REPORTED"
           action="View all"
           onAction={() => go("search")}
         />
+        {error && <div className="form-error">{error}</div>}
         <div className="item-list">
-          <ItemCard
-            kind="phone"
-            name="Black Smartphone"
-            location="Library"
-            date="Today"
-            onClick={() => go("item")}
-          />
-          <ItemCard
-            kind="backpack"
-            name="Black Backpack"
-            location="Academic Block"
-            date="Yesterday"
-            onClick={() => go("item")}
-          />
-          <ItemCard
-            kind="keys"
-            name="Keychain"
-            location="Canteen"
-            date="Yesterday"
-            onClick={() => go("item")}
-          />
+          {loading ? <div className="loading-lines"><span /><span /><span /></div> : items.length === 0 ? (
+            <Card className="empty-state">
+              <strong>No reports yet</strong>
+              <span>New campus lost and found reports will appear here.</span>
+            </Card>
+          ) : items.map((item, index) => (
+            <ItemCard
+              key={item.id}
+              kind={index % 3 === 0 ? 'phone' : index % 3 === 1 ? 'backpack' : 'keys'}
+              name={item.title}
+              location={item.location}
+              date={item.itemDate ? new Date(item.itemDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric'}) : 'Today'}
+              imageUrl={item.imageUrls?.[0]}
+              status={item.itemType}
+              tone={item.itemType === 'LOST' ? 'red' : 'green'}
+              onClick={() => onSelectItem(item.id)}
+            />
+          ))}
         </div>
       </div>
     </MobilePage>
@@ -824,26 +1032,97 @@ function MobilePage({
   )
 }
 
-function SearchScreen({ go }: { go: (s: Screen) => void }) {
+function SearchScreen({ go, onSelectItem }: { go: (s: Screen) => void; onSelectItem: (id: string) => void }) {
   const [filterOpen, setFilterOpen] = useState(false)
-  const chips = [
-    "All",
-    "Lost",
-    "Found",
-    "Electronics",
-    "Bags",
-    "ID Cards",
-    "Books",
-    "Keys",
-    "Other",
-  ]
+  const [query, setQuery] = useState('')
+  const [items, setItems] = useState<ItemDto[]>([])
+  const [totalResults, setTotalResults] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [itemType, setItemType] = useState('')
+  const [category, setCategory] = useState('')
+  const [draftFilters, setDraftFilters] = useState({ category: '', location: '', status: '', dateFrom: '' })
+  const [filters, setFilters] = useState(draftFilters)
+  const [sortBy, setSortBy] = useState('createdAt')
+  const chips = ['All', 'Lost', 'Found', 'Electronics', 'Bags', 'ID Cards', 'Books', 'Keys', 'Other']
+
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const response = await getItems({
+          keyword: query,
+          type: itemType || undefined,
+          category: category || undefined,
+          location: filters.location || undefined,
+          status: filters.status || undefined,
+          dateFrom: filters.dateFrom ? `${filters.dateFrom}T00:00:00` : undefined,
+          sortBy,
+          direction: 'DESC',
+          page: 0,
+          size: 12,
+        })
+        if (active) {
+          setItems(response.content ?? [])
+          setTotalResults(response.totalElements ?? response.content?.length ?? 0)
+        }
+      } catch (loadError) {
+        if (active) {
+          setItems([])
+          setTotalResults(0)
+          setError(loadError instanceof Error ? loadError.message : 'Unable to search items.')
+        }
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    const timeout = window.setTimeout(() => {
+      void load()
+    }, 300)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeout)
+    }
+  }, [query, itemType, category, filters, sortBy])
+
+  const primaryItem = items[0]
+  const selectChip = (chip: string) => {
+    if (chip === 'All') {
+      setItemType('')
+      setCategory('')
+    } else if (chip === 'Lost' || chip === 'Found') {
+      setItemType(chip.toUpperCase())
+      setCategory('')
+    } else {
+      setItemType('')
+      setCategory(chip)
+    }
+  }
+  const selectedChip = itemType === 'LOST' ? 'Lost' : itemType === 'FOUND' ? 'Found' : category || 'All'
+
   return (
     <MobilePage current="search" go={go}>
       <div className="sticky-head">
         <TopBar title="Search Lost & Found" />
         <div className="search-box active">
           <Icon name="search" />
-          <span>What are you looking for?</span>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="What are you looking for?"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              flex: 1,
+              color: 'inherit',
+              font: 'inherit',
+              outline: 'none',
+            }}
+          />
           <div
             className="filter-icon"
             role="button"
@@ -853,8 +1132,13 @@ function SearchScreen({ go }: { go: (s: Screen) => void }) {
           </div>
         </div>
         <div className="chips">
-          {chips.map((chip, index) => (
-            <div className={`chip ${index === 0 ? "selected" : ""}`} key={chip}>
+          {chips.map((chip) => (
+            <div
+              className={`chip ${selectedChip === chip ? 'selected' : ''}`}
+              key={chip}
+              role="button"
+              onClick={() => selectChip(chip)}
+            >
               {chip}
             </div>
           ))}
@@ -862,70 +1146,73 @@ function SearchScreen({ go }: { go: (s: Screen) => void }) {
       </div>
       <div className="mobile-content">
         <div className="result-heading">
-          <span>86 results</span>
-          <span>
-            Most relevant <Icon name="chevron" size="sm" />
-          </span>
+          <span>{loading ? 'Loading…' : `${totalResults} results`}</span>
+          <label>
+            <span className="sr-only">Sort results</span>
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+              <option value="createdAt">Most recent</option>
+              <option value="itemDate">Item date</option>
+              <option value="title">Title</option>
+            </select>
+          </label>
         </div>
         {filterOpen && (
           <Card className="filter-panel">
             <div className="filter-title">Advanced filters</div>
             <div className="filter-grid">
-              {["Category", "Location", "Date", "Color", "Status"].map(
-                (label) => (
-                  <Field
-                    key={label}
-                    label={label}
-                    placeholder={`Any ${label.toLowerCase()}`}
-                  />
-                ),
-              )}
+              <Field label="Category" value={draftFilters.category} placeholder="Any category" editable onChange={(event) => setDraftFilters({ ...draftFilters, category: event.target.value })} />
+              <Field label="Location" value={draftFilters.location} placeholder="Any location" editable onChange={(event) => setDraftFilters({ ...draftFilters, location: event.target.value })} />
+              <Field label="Date from" value={draftFilters.dateFrom} type="date" editable onChange={(event) => setDraftFilters({ ...draftFilters, dateFrom: event.target.value })} />
+              <Field label="Status" value={draftFilters.status} placeholder="LOST, FOUND, CLAIMED, RESOLVED" editable onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value.toUpperCase() })} />
             </div>
-            <Button onClick={() => setFilterOpen(false)}>APPLY FILTERS</Button>
+            <Button onClick={() => { setFilters(draftFilters); setCategory(draftFilters.category); setFilterOpen(false) }}>APPLY FILTERS</Button>
           </Card>
         )}
-        <Card className="result-featured" onClick={() => go("item")}>
-          <ItemVisual kind="airpods" large />
-          <div className="result-content">
-            <div className="item-row">
-              <Badge tone="green">FOUND</Badge>
-              <Badge tone="blue">Possible Match</Badge>
+        {primaryItem && (
+          <Card className="result-featured" onClick={() => onSelectItem(primaryItem.id)}>
+            <ItemVisual kind="airpods" large imageUrl={primaryItem.imageUrls?.[0]} />
+            <div className="result-content">
+              <div className="item-row">
+                <Badge tone={primaryItem.itemType === 'LOST' ? 'red' : 'green'}>{primaryItem.itemType}</Badge>
+                <Badge tone="blue">Top result</Badge>
+              </div>
+              <div className="result-title">{primaryItem.title}</div>
+              <div className="item-meta vertical">
+                <span>
+                  <Icon name="pin" size="sm" />
+                  {primaryItem.location}
+                </span>
+                <span>
+                  <Icon name="calendar" size="sm" />
+                  {primaryItem.itemDate ? new Date(primaryItem.itemDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+                </span>
+              </div>
+              <Button wide={false} onClick={() => onSelectItem(primaryItem.id)}>
+                VIEW DETAILS
+              </Button>
             </div>
-            <div className="result-title">Black AirPods Pro</div>
-            <div className="item-meta vertical">
-              <span>
-                <Icon name="pin" size="sm" />
-                Canteen
-              </span>
-              <span>
-                <Icon name="calendar" size="sm" />
-                02 Oct 2026
-              </span>
-            </div>
-            <Button wide={false} onClick={() => go("item")}>
-              VIEW DETAILS
-            </Button>
-          </div>
-        </Card>
+          </Card>
+        )}
         <div className="item-list">
-          <ItemCard
-            kind="backpack"
-            name="Navy College Backpack"
-            location="Main Block"
-            date="02 Oct 2026"
-          />
-          <ItemCard
-            kind="phone"
-            name="Samsung Smartphone"
-            location="Library"
-            date="01 Oct 2026"
-          />
-          <ItemCard
-            kind="keys"
-            name="Bike Key with Tag"
-            location="Parking"
-            date="30 Sep 2026"
-          />
+          {loading ? (
+            <div className="loading-lines"><span /><span /><span /></div>
+          ) : error ? (
+            <div className="form-error">{error}</div>
+          ) : items.length === 0 ? (
+            <Card className="empty-state"><strong>No matching items</strong><span>Try changing your search or filters.</span></Card>
+          ) : items.slice(1, 9).map((item, index) => (
+            <ItemCard
+              key={item.id ?? index}
+              kind={index % 3 === 0 ? 'phone' : index % 3 === 1 ? 'backpack' : 'keys'}
+              name={item.title}
+              location={item.location}
+              date={item.itemDate ? new Date(item.itemDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today'}
+              imageUrl={item.imageUrls?.[0]}
+              status={item.itemType}
+              tone={item.itemType === 'LOST' ? 'red' : 'green'}
+              onClick={() => onSelectItem(item.id)}
+            />
+          ))}
         </div>
       </div>
     </MobilePage>
@@ -952,7 +1239,15 @@ function FormShell({
   )
 }
 
-function ReportLostItem({ go }: { go: (s: Screen) => void }) {
+function ReportLostItem({
+  go,
+  draft,
+  setDraft,
+}: {
+  go: (s: Screen) => void
+  draft: ReportDraft
+  setDraft: (draft: ReportDraft) => void
+}) {
   return (
     <FormShell title="Report Lost Item" step={1} go={go}>
       <div className="form-heading">What did you lose?</div>
@@ -960,20 +1255,36 @@ function ReportLostItem({ go }: { go: (s: Screen) => void }) {
         Start with the basics. You can finish this report in under a minute.
       </p>
       <div className="form-stack">
-        <Field label="Category" value="Electronics" />
-        <Field label="Item name" value="AirPods Pro" />
+        <Field
+          label="Category"
+          value={draft.category}
+          editable
+          onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+        />
+        <Field
+          label="Item name"
+          value={draft.itemName}
+          editable
+          onChange={(event) => setDraft({ ...draft, itemName: event.target.value })}
+        />
         <div className="field-row">
-          <Field label="Brand" value="Apple" />
-          <Field label="Color" value="White" />
+          <Field
+            label="Brand"
+            value={draft.brand}
+            editable
+            onChange={(event) => setDraft({ ...draft, brand: event.target.value })}
+          />
+          <Field
+            label="Color"
+            value={draft.color}
+            editable
+            onChange={(event) => setDraft({ ...draft, color: event.target.value })}
+          />
         </div>
         <div className="field-label">
           Add image <span className="optional">Optional</span>
         </div>
-        <div className="photo-drop">
-          <Icon name="camera" size="lg" />
-          <strong>+ Add Photo</strong>
-          <span>A clear photo helps us find matches</span>
-        </div>
+        <ImageUploadField value={draft.imageUrls[0]} onUploaded={(url) => setDraft({ ...draft, imageUrls: [url] })} />
       </div>
       <div className="button-row">
         <Button variant="secondary" onClick={() => go("home")}>
@@ -985,7 +1296,15 @@ function ReportLostItem({ go }: { go: (s: Screen) => void }) {
   )
 }
 
-function LostDetails({ go }: { go: (s: Screen) => void }) {
+function LostDetails({
+  go,
+  draft,
+  setDraft,
+}: {
+  go: (s: Screen) => void
+  draft: ReportDraft
+  setDraft: (draft: ReportDraft) => void
+}) {
   return (
     <FormShell title="Lost Item Details" step={2} go={go}>
       <div className="form-heading">When and where?</div>
@@ -994,25 +1313,48 @@ function LostDetails({ go }: { go: (s: Screen) => void }) {
       </p>
       <div className="form-stack">
         <div className="field-row">
-          <Field label="Date Lost" value="02 Oct 2026" icon="calendar" />
-          <Field label="Approx. Time" value="1:15 PM" icon="clock" />
+          <Field
+            label="Date Lost"
+            value={draft.date}
+            icon="calendar"
+            editable
+            type="date"
+            onChange={(event) => setDraft({ ...draft, date: event.target.value })}
+          />
+          <Field
+            label="Approx. Time"
+            value={draft.time}
+            icon="clock"
+            editable
+            type="time"
+            onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+          />
         </div>
-        <Field label="Where did you lose it?" value="Canteen" />
+        <Field
+          label="Where did you lose it?"
+          value={draft.location}
+          editable
+          onChange={(event) => setDraft({ ...draft, location: event.target.value })}
+        />
         <Field
           label="Describe your item"
-          value="White Apple AirPods Pro and charging case."
+          value={draft.description}
           multiline
+          editable
+          onChange={(event) => setDraft({ ...draft, description: event.target.value })}
         />
         <Field
           label="Private identifying details"
-          value="Small scratch underneath the charging case."
+          value={draft.privateDetails}
           multiline
           privateField
+          editable
+          onChange={(event) => setDraft({ ...draft, privateDetails: event.target.value })}
         />
         <div className="privacy-tip">
           <Icon name="shield" />
           <span>
-            <strong>Kept private</strong>These details are hidden from public
+            <strong>Kept private</strong> These details are hidden from public
             listings and used only to verify ownership.
           </span>
         </div>
@@ -1030,16 +1372,23 @@ function LostDetails({ go }: { go: (s: Screen) => void }) {
 function Review({
   go,
   onSubmit,
+  draft,
+  submitting,
+  error,
 }: {
   go: (s: Screen) => void
-  onSubmit: () => void
+  onSubmit: () => Promise<void> | void
+  draft: ReportDraft
+  submitting?: boolean
+  error?: string | null
 }) {
   const rows = [
-    ["Category", "Electronics"],
-    ["Color", "White"],
-    ["Location", "Canteen"],
-    ["Date", "02 Oct 2026"],
-    ["Time", "1:15 PM"],
+    ["Category", draft.category],
+    ["Brand", draft.brand || "Not set"],
+    ["Color", draft.color],
+    ["Location", draft.location],
+    ["Date", draft.date || "Not set"],
+    ["Time", draft.time || "Not set"],
   ]
   return (
     <FormShell title="Review Your Report" step={4} go={go}>
@@ -1049,33 +1398,34 @@ function Review({
       </p>
       <Card className="review-card">
         <div className="review-top">
-          <ItemVisual kind="airpods" />
+          <ItemVisual kind="airpods" imageUrl={draft.imageUrls[0]} />
           <div>
             <Badge tone="red">LOST</Badge>
-            <div className="review-name">Apple AirPods Pro</div>
+            <div className="review-name">{draft.itemName || "Item"}</div>
           </div>
         </div>
         <div className="review-rows">
           {rows.map(([label, value]) => (
             <div className="review-row" key={label}>
               <span>{label}</span>
-              <strong>{value}</strong>
+              <strong>{String(value)}</strong>
             </div>
           ))}
         </div>
         <div className="review-description">
           <span>Description</span>
-          <p>White AirPods Pro with a small scratch underneath the case.</p>
+          <p>{draft.description || "No description added."}</p>
         </div>
         <div className="privacy-inline">
           <Icon name="lock" size="sm" /> Private details protected
         </div>
       </Card>
+      {error && <div className="form-error">{error}</div>}
       <div className="button-row">
         <Button variant="secondary" onClick={() => go("lost-details")}>
           EDIT
         </Button>
-        <Button onClick={onSubmit}>SUBMIT REPORT</Button>
+        <Button onClick={onSubmit}>{submitting ? "SUBMITTING..." : "SUBMIT REPORT"}</Button>
       </div>
     </FormShell>
   )
@@ -1084,9 +1434,11 @@ function Review({
 function Success({
   go,
   kind,
+  itemId,
 }: {
   go: (s: Screen) => void
   kind: "lost" | "found"
+  itemId: string | null
 }) {
   const isFound = kind === "found"
   return (
@@ -1107,29 +1459,13 @@ function Success({
       </p>
       <Card className="report-id">
         <span>REPORT ID</span>
-        <strong>{isFound ? "FD-2026-00487" : "LF-2026-00128"}</strong>
+        <strong>{itemId ?? '—'}</strong>
         <div className="copy-icon">
           <Icon name="file" size="sm" />
         </div>
       </Card>
-      {!isFound && (
-        <div
-          className="instant-match"
-          role="button"
-          onClick={() => go("match")}
-        >
-          <div>
-            <Icon name="target" />
-          </div>
-          <span>
-            <strong>Possible match detected</strong>A similar AirPods report is
-            ready to review
-          </span>
-          <Icon name="chevron" />
-        </div>
-      )}
       <div className="center-actions">
-        <Button onClick={() => go("reports")}>VIEW REPORT</Button>
+        <Button onClick={() => go(itemId ? "item" : "reports")}>VIEW REPORT</Button>
         <Button variant="secondary" onClick={() => go("home")}>
           BACK TO HOME
         </Button>
@@ -1141,9 +1477,17 @@ function Success({
 function FoundForm({
   go,
   onSubmit,
+  draft,
+  setDraft,
+  submitting,
+  error,
 }: {
   go: (s: Screen) => void
-  onSubmit: () => void
+  onSubmit: () => Promise<void> | void
+  draft: ReportDraft
+  setDraft: (draft: ReportDraft) => void
+  submitting?: boolean
+  error?: string | null
 }) {
   return (
     <FormShell title="Report Found Item" go={go}>
@@ -1156,23 +1500,56 @@ function FoundForm({
       <div className="form-heading">What did you find?</div>
       <div className="form-stack">
         <div className="field-row">
-          <Field label="Category" value="Electronics" />
-          <Field label="Color" value="White" />
-        </div>
-        <Field label="Item name" value="AirPods Pro" />
-        <Field label="Location found" value="Canteen" />
-        <div className="field-row">
-          <Field label="Date found" value="02 Oct 2026" icon="calendar" />
-          <Field label="Time found" value="1:40 PM" icon="clock" />
-        </div>
-        <div className="photo-drop compact">
-          <Icon name="camera" />
-          <strong>Add a photo</strong>
+          <Field
+            label="Category"
+            value={draft.category}
+            editable
+            onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+          />
+          <Field
+            label="Color"
+            value={draft.color}
+            editable
+            onChange={(event) => setDraft({ ...draft, color: event.target.value })}
+          />
         </div>
         <Field
+          label="Item name"
+          value={draft.itemName}
+          editable
+          onChange={(event) => setDraft({ ...draft, itemName: event.target.value })}
+        />
+        <Field
+          label="Location found"
+          value={draft.location}
+          editable
+          onChange={(event) => setDraft({ ...draft, location: event.target.value })}
+        />
+        <div className="field-row">
+          <Field
+            label="Date found"
+            value={draft.date}
+            icon="calendar"
+            editable
+            type="date"
+            onChange={(event) => setDraft({ ...draft, date: event.target.value })}
+          />
+          <Field
+            label="Time found"
+            value={draft.time}
+            icon="clock"
+            editable
+            type="time"
+            onChange={(event) => setDraft({ ...draft, time: event.target.value })}
+          />
+        </div>
+        <ImageUploadField value={draft.imageUrls[0]} onUploaded={(url) => setDraft({ ...draft, imageUrls: [url] })} />
+        <Field
           label="Description"
-          value="White AirPods Pro found near the west entrance."
+          value={draft.description}
           multiline
+          editable
+          onChange={(event) => setDraft({ ...draft, description: event.target.value })}
         />
         <div className="field-label">Where is the item currently?</div>
         <div className="radio-list">
@@ -1182,8 +1559,8 @@ function FoundForm({
             "With Security",
             "Other",
           ].map((item, index) => (
-            <div className="radio-row" key={item}>
-              <span className={`radio ${index === 1 ? "selected" : ""}`} />
+            <div className="radio-row" key={item} role="radio" aria-checked={draft.currentLocation === item} onClick={() => setDraft({ ...draft, currentLocation: item })}>
+              <span className={`radio ${draft.currentLocation === item ? "selected" : ""}`} />
               {item}
             </div>
           ))}
@@ -1195,14 +1572,56 @@ function FoundForm({
             private identifying details publicly.
           </span>
         </div>
-        <Button onClick={onSubmit}>SUBMIT FOUND ITEM</Button>
+        {error && <div className="form-error">{error}</div>}
+        <Button onClick={onSubmit}>{submitting ? "SUBMITTING..." : "SUBMIT FOUND ITEM"}</Button>
       </div>
     </FormShell>
   )
 }
 
-function ItemDetails({ go }: { go: (s: Screen) => void }) {
+function ItemDetails({ go, itemId }: { go: (s: Screen) => void; itemId: string | null }) {
   const [reportDialog, setReportDialog] = useState(false)
+  const [reportReason, setReportReason] = useState('')
+  const [submittingReport, setSubmittingReport] = useState(false)
+  const [reportError, setReportError] = useState('')
+  const [reportSuccess, setReportSuccess] = useState('')
+  const [item, setItem] = useState<ItemDto | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!itemId) {
+      setItem(null)
+      setError('Select a report from the feed or search results first.')
+      return
+    }
+    let active = true
+    setLoading(true)
+    setError('')
+    setItem(null)
+    getItemById(itemId)
+      .then((data) => {
+        if (active) setItem(data)
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load this item.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [itemId])
+
+  const completedLifecycleSteps = item?.status === 'RESOLVED'
+    ? 4
+    : item?.status === 'CLAIMED'
+      ? 2
+      : item?.status === 'FOUND'
+        ? 1
+        : 0
+
   return (
     <MobilePage go={go}>
       <div className="detail-hero">
@@ -1214,34 +1633,41 @@ function ItemDetails({ go }: { go: (s: Screen) => void }) {
             </div>
           }
         />
-        <ItemVisual kind="airpods" large />
-        <Badge tone="green">FOUND</Badge>
+        <ItemVisual kind="airpods" large imageUrl={item?.imageUrls?.[0]} />
+        {item && <Badge tone={item.itemType === 'LOST' ? 'red' : 'green'}>{item.itemType}</Badge>}
       </div>
       <div className="mobile-content detail-content">
-        <div className="page-title">White AirPods Pro</div>
-        <div className="detail-id">ITEM #FD-2026-00487</div>
+        {loading ? (
+          <div className="loading-lines"><span /><span /><span /></div>
+        ) : error ? (
+          <div className="form-error">{error}</div>
+        ) : item ? (
+          <>
+        <div className="page-title">{item.title}</div>
+        <div className="detail-id">ITEM #{item.id}</div>
         <div className="detail-grid">
           <div>
             <span>Category</span>
-            <strong>Electronics</strong>
+            <strong>{item.category}</strong>
           </div>
+          {item.brand && <div><span>Brand</span><strong>{item.brand}</strong></div>}
+          {item.color && <div><span>Color</span><strong>{item.color}</strong></div>}
           <div>
-            <span>Found</span>
-            <strong>02 Oct 2026</strong>
+            <span>{item.itemType === 'FOUND' ? 'Found' : 'Lost'}</span>
+            <strong>{item.itemDate ? new Date(item.itemDate).toLocaleDateString() : 'Date not specified'}</strong>
           </div>
           <div>
             <span>Location</span>
-            <strong>Canteen</strong>
+            <strong>{item.location}</strong>
           </div>
           <div>
             <span>Status</span>
-            <strong>At L&amp;F Desk</strong>
+            <strong>{item.custodyLocation || item.status}</strong>
           </div>
         </div>
         <SectionTitle title="DESCRIPTION" />
         <p className="detail-description">
-          White Apple AirPods Pro found near the canteen west entrance. Stored
-          securely at the campus Lost &amp; Found Desk.
+          {item.description}
         </p>
         <div className="privacy-tip">
           <Icon name="shield" />
@@ -1252,16 +1678,16 @@ function ItemDetails({ go }: { go: (s: Screen) => void }) {
         </div>
         <SectionTitle title="ITEM STATUS" />
         <Card className="item-lifecycle">
-          {["Reported", "Secured at desk", "Ownership claim", "Returned"].map(
+          {["Reported", "Found and secured", "Ownership claim", "Returned"].map(
             (label, index) => (
               <div
-                className={`lifecycle-step ${index < 2 ? "complete" : ""} ${
-                  index === 2 ? "current" : ""
+                className={`lifecycle-step ${index < completedLifecycleSteps ? "complete" : ""} ${
+                  item.status !== 'RESOLVED' && index === completedLifecycleSteps ? "current" : ""
                 }`}
                 key={label}
               >
                 <span>
-                  {index < 2 ? <Icon name="check" size="sm" /> : index + 1}
+                  {index < completedLifecycleSteps ? <Icon name="check" size="sm" /> : index + 1}
                 </span>
                 <strong>{label}</strong>
               </div>
@@ -1277,28 +1703,107 @@ function ItemDetails({ go }: { go: (s: Screen) => void }) {
             Submit a secure ownership claim. We&apos;ll ask for details only the
             owner would know.
           </p>
-          <Button onClick={() => go("verify")}>CLAIM THIS ITEM</Button>
+          {item.itemType === 'FOUND' && item.status === 'FOUND'
+            ? <Button onClick={() => go("verify")}>CLAIM THIS ITEM</Button>
+            : item.itemType === 'LOST' && <Button onClick={() => go("match")}>FIND POSSIBLE MATCHES</Button>}
           <Button variant="ghost" onClick={() => setReportDialog(true)}>
             REPORT LISTING
           </Button>
+          {reportSuccess && <div className="success-message">{reportSuccess}</div>}
         </Card>
+          </>
+        ) : null}
       </div>
-      {reportDialog && (
+      {reportDialog && item && (
         <Modal
           icon="warning"
           title="Report this listing?"
-          copy="KSIT staff will review this listing for inaccurate, unsafe, or inappropriate information."
-          action="SUBMIT REPORT"
+          copy="Describe why this listing needs review. The reason will be shared with authorized administrators."
+          action={submittingReport ? 'SUBMITTING...' : 'SUBMIT REPORT'}
           destructive
-          onClose={() => setReportDialog(false)}
-          onAction={() => setReportDialog(false)}
+          onClose={() => { setReportDialog(false); setReportError('') }}
+          onAction={() => {
+            if (!reportReason.trim()) {
+              setReportError('Add a reason so administrators can review this listing.')
+              return
+            }
+            setSubmittingReport(true)
+            setReportError('')
+            void reportItem(item.id, reportReason.trim())
+              .then(() => {
+                setReportDialog(false)
+                setReportReason('')
+                setReportSuccess('Your report was sent to the KSIT administrators.')
+              })
+              .catch((submitError) => {
+                setReportError(submitError instanceof Error ? submitError.message : 'Unable to submit this listing report.')
+              })
+              .finally(() => setSubmittingReport(false))
+          }}
+          content={
+            <div className="form-stack">
+              <label className="field-label" htmlFor="listing-report-reason">Reason</label>
+              <textarea
+                id="listing-report-reason"
+                value={reportReason}
+                onChange={(event) => setReportReason(event.target.value)}
+                maxLength={1000}
+                rows={3}
+                disabled={submittingReport}
+                className="report-reason"
+              />
+              {reportError && <div className="form-error">{reportError}</div>}
+            </div>
+          }
         />
       )}
     </MobilePage>
   )
 }
 
-function Match({ go }: { go: (s: Screen) => void }) {
+function Match({ go, itemId, onSelectItem }: {
+  go: (s: Screen) => void
+  itemId: string | null
+  onSelectItem: (id: string) => void
+}) {
+  const [lostItem, setLostItem] = useState<ItemDto | null>(null)
+  const [matches, setMatches] = useState<ItemDto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!itemId) {
+      setError('Select one of your lost reports to look for possible matches.')
+      return
+    }
+    let active = true
+    setLoading(true)
+    setError('')
+    const load = async () => {
+      try {
+        const lost = await getItemById(itemId)
+        if (active) setLostItem(lost)
+        const found = await getItems({
+          type: 'FOUND',
+          category: lost.category,
+          page: 0,
+          size: 20,
+          sortBy: 'itemDate',
+          direction: 'DESC',
+        })
+        if (active) setMatches(found.content.filter((item) => item.status === 'FOUND'))
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to find possible matches.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    void load()
+    return () => { active = false }
+  }, [itemId])
+
+  const match = matches[0]
+
   return (
     <MobilePage go={go}>
       <TopBar title="SMART MATCH" back={() => go("home")} />
@@ -1308,31 +1813,35 @@ function Match({ go }: { go: (s: Screen) => void }) {
             <Icon name="target" size="xl" />
           </div>
           <div className="page-title">
-            We may have found a match! <span aria-label="target">🎯</span>
+            {match ? 'Possible matches found' : 'Search for a match'} <span aria-label="target">🎯</span>
           </div>
-          <p>Our matching system found an item similar to your lost report.</p>
+          <p>Available found reports in the same category are shown below.</p>
         </div>
+        {error && <div className="form-error">{error}</div>}
+        {loading ? <div className="loading-lines"><span /><span /><span /></div> : lostItem && match ? (
         <div className="comparison">
           <Card>
             <div className="comparison-label">YOUR LOST ITEM</div>
-            <ItemVisual kind="airpods" />
-            <strong>White AirPods Pro</strong>
+            <ItemVisual kind="airpods" imageUrl={lostItem.imageUrls?.[0]} />
+            <strong>{lostItem.title}</strong>
             <Badge tone="red">LOST</Badge>
           </Card>
           <div className="versus">VS</div>
-          <Card>
+          <Card onClick={() => onSelectItem(match.id)}>
             <div className="comparison-label">POSSIBLE FOUND ITEM</div>
-            <ItemVisual kind="airpods" />
-            <strong>White Apple AirPods Pro</strong>
+            <ItemVisual kind="airpods" imageUrl={match.imageUrls?.[0]} />
+            <strong>{match.title}</strong>
             <Badge tone="green">FOUND</Badge>
+            <span>{match.location}</span>
           </Card>
         </div>
+        ) : !error && !loading ? <Card className="empty-state"><strong>No matching found reports</strong><span>Try again later or browse all found items.</span><Button wide={false} onClick={() => go('search')}>SEARCH ITEMS</Button></Card> : null}
         <Card className="match-factors">
           <div className="section-title">
             <span>WHY IT MATCHES</span>
-            <Badge tone="blue">92% MATCH</Badge>
+            <Badge tone="blue">POSSIBLE MATCH</Badge>
           </div>
-          {["Same category", "Same color", "Similar location", "Same date"].map(
+          {[`Same category: ${lostItem?.category ?? '—'}`, 'Review description and location', 'Contact staff to verify private evidence'].map(
             (factor) => (
               <div className="factor" key={factor}>
                 <span>
@@ -1350,7 +1859,7 @@ function Match({ go }: { go: (s: Screen) => void }) {
           </span>
         </div>
         <div className="form-stack">
-          <Button onClick={() => go("verify")}>VERIFY OWNERSHIP</Button>
+          <Button onClick={() => match && onSelectItem(match.id)}>VERIFY OWNERSHIP</Button>
           <Button variant="secondary" onClick={() => go("home")}>
             NOT MY ITEM
           </Button>
@@ -1360,7 +1869,39 @@ function Match({ go }: { go: (s: Screen) => void }) {
   )
 }
 
-function Verify({ go }: { go: (s: Screen) => void }) {
+function Verify({ go, itemId, onSubmitted }: { go: (s: Screen) => void; itemId: string | null; onSubmitted: (id: string) => void }) {
+  const [evidence, setEvidence] = useState('')
+  const [lastSeenTime, setLastSeenTime] = useState('')
+  const [lastSeenLocation, setLastSeenLocation] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async () => {
+    if (!itemId) {
+      setError('The item could not be identified. Return to search and select it again.')
+      return
+    }
+    if (!evidence.trim()) {
+      setError('Please provide identifying evidence before submitting your claim.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const evidenceDetails = [
+        `Identifying feature: ${evidence.trim()}`,
+        lastSeenTime.trim() ? `Approximate time lost: ${lastSeenTime.trim()}` : '',
+        lastSeenLocation.trim() ? `Last seen location: ${lastSeenLocation.trim()}` : '',
+      ].filter(Boolean).join('\n')
+      const claim = await submitClaim(itemId, { evidence: evidenceDetails })
+      onSubmitted(claim.id)
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Unable to submit your claim.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <FormShell title="Verify Ownership" go={go}>
       <div className="verify-mark">
@@ -1379,40 +1920,81 @@ function Verify({ go }: { go: (s: Screen) => void }) {
           placeholder="Describe a mark, scratch, or unique detail"
           multiline
           privateField
+          value={evidence}
+          editable
+          onChange={(event) => setEvidence(event.target.value)}
         />
         <Field
-          label="What was the approximate time you lost it?"
-          value="1:15 PM"
+          label="Approximate time you lost it (optional)"
+          value={lastSeenTime}
           icon="clock"
+          editable
+          type="time"
+          onChange={(event) => setLastSeenTime(event.target.value)}
         />
         <Field
-          label="Where exactly did you last see it?"
-          value="Near the west-side juice counter"
-          multiline
-          privateField
+          label="Where did you last see it? (optional)"
+          value={lastSeenLocation}
+          placeholder="Campus area or nearby landmark"
+          editable
+          onChange={(event) => setLastSeenLocation(event.target.value)}
         />
-        <div className="upload-proof">
-          <Icon name="camera" />
-          <div>
-            <strong>Upload proof of ownership</strong>
-            <span>Receipt, box, or a previous photo (optional)</span>
-          </div>
-          <Icon name="chevron" size="sm" />
-        </div>
         <div className="privacy-tip">
           <Icon name="lock" />
           <span>
-            Your answers are encrypted and only used by authorized staff to
-            verify ownership.
+            Your answers are private to the claim participants and authorized
+              staff reviewing ownership.
           </span>
         </div>
-        <Button onClick={() => go("claim")}>SUBMIT CLAIM</Button>
+        {error && <div className="form-error">{error}</div>}
+        <Button onClick={handleSubmit}>{loading ? "SUBMITTING..." : "SUBMIT CLAIM"}</Button>
       </div>
     </FormShell>
   )
 }
 
-function ClaimStatus({ go }: { go: (s: Screen) => void }) {
+function ClaimStatus({ go, claimId }: { go: (s: Screen) => void; claimId: string | null }) {
+  const [claim, setClaim] = useState<ClaimDto | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError('')
+    const loadClaim = async () => {
+      try {
+        const data = claimId
+          ? await getClaimById(claimId)
+          : (await getMyClaims())[0] ?? null
+        if (active) {
+          setClaim(data)
+          if (!data) setError('You have not submitted a claim yet.')
+        }
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load claim status.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    void loadClaim()
+    return () => { active = false }
+  }, [claimId])
+
+  const cancelClaim = async () => {
+    if (!claim) return
+    setSaving(true)
+    setError('')
+    try {
+      setClaim(await updateClaimStatus(claim.id, 'CANCELLED'))
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'Unable to cancel this claim.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <MobilePage go={go}>
       <TopBar
@@ -1425,20 +2007,24 @@ function ClaimStatus({ go }: { go: (s: Screen) => void }) {
         }
       />
       <div className="mobile-content">
+        {loading && <div className="loading-lines"><span /><span /><span /></div>}
+        {error && <div className="form-error">{error}</div>}
+        {claim && (
+          <>
         <Card className="claim-item">
           <ItemVisual kind="airpods" />
           <div>
-            <Badge tone="orange">UNDER REVIEW</Badge>
-            <div className="item-name">White AirPods Pro</div>
-            <span>Claim #CL-2026-00042</span>
+            <Badge tone={claim.status === 'APPROVED' ? 'green' : claim.status === 'REJECTED' ? 'red' : 'orange'}>{claim.status}</Badge>
+            <div className="item-name">{claim.itemTitle}</div>
+            <span>Claim #{claim.id}</span>
           </div>
         </Card>
         <Card className="status-card">
           <div className="status-card-head">
             <span>Claim progress</span>
-            <span>Step 3 of 5</span>
+            <span>{claim.status === 'PENDING' ? 'Under review' : claim.status}</span>
           </div>
-          <StatusTimeline active={2} />
+          <StatusTimeline status={claim.status} />
         </Card>
         <div className="privacy-tip blue">
           <Icon name="clock" />
@@ -1450,12 +2036,66 @@ function ClaimStatus({ go }: { go: (s: Screen) => void }) {
         <Button icon="message" variant="secondary" onClick={() => go("chat")}>
           OPEN ITEM DISCUSSION
         </Button>
+        {claim.status === 'APPROVED' && <Button onClick={() => go('handover')}>VIEW HANDOVER STATUS</Button>}
+        {claim.status === 'PENDING' && <Button variant="ghost" onClick={() => void cancelClaim()}>{saving ? 'CANCELLING...' : 'CANCEL CLAIM'}</Button>}
+          </>
+        )}
       </div>
     </MobilePage>
   )
 }
 
-function Chat({ go }: { go: (s: Screen) => void }) {
+function Chat({ go, claimId }: { go: (s: Screen) => void; claimId: string | null }) {
+  const [activeClaim, setActiveClaim] = useState<ClaimDto | null>(null)
+  const [messages, setMessages] = useState<ClaimMessageDto[]>([])
+  const [draft, setDraft] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError('')
+    const load = async () => {
+      try {
+        const resolvedClaim = claimId
+          ? await getClaimById(claimId)
+          : (await getMyClaims())[0] ?? null
+        if (!resolvedClaim) {
+          if (active) setError('A claim is required before you can open a discussion.')
+          return
+        }
+        const data = await getClaimMessages(resolvedClaim.id)
+        if (active) {
+          setActiveClaim(resolvedClaim)
+          setMessages(data)
+        }
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load this discussion.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    void load()
+    return () => { active = false }
+  }, [claimId])
+
+  const send = async () => {
+    if (!activeClaim || !draft.trim() || sending) return
+    setSending(true)
+    setError('')
+    try {
+      const message = await sendClaimMessage(activeClaim.id, draft.trim())
+      setMessages((current) => [...current, message])
+      setDraft('')
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : 'Unable to send this message.')
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <MobilePage go={go}>
       <TopBar
@@ -1466,35 +2106,29 @@ function Chat({ go }: { go: (s: Screen) => void }) {
       <div className="chat-context">
         <ItemVisual kind="airpods" />
         <div>
-          <strong>White AirPods Pro</strong>
-          <span>Claim #CL-2026-00042</span>
+          <strong>{activeClaim?.itemTitle ?? 'Claim discussion'}</strong>
+          <span>{activeClaim ? `Claim #${activeClaim.id}` : ''}</span>
         </div>
-        <Badge tone="orange">REVIEW</Badge>
+        {activeClaim && <Badge tone={activeClaim.status === 'PENDING' ? 'orange' : 'blue'}>{activeClaim.status}</Badge>}
       </div>
       <div className="safety-strip">
         <Icon name="shield" size="sm" />
         For your privacy, phone numbers and email addresses are hidden.
       </div>
       <div className="messages">
-        <div className="date-separator">TODAY</div>
-        <div className="bubble mine">
-          Hi, I think this might be my AirPods.<span>1:18 PM</span>
-        </div>
-        <div className="bubble theirs">
-          Can you describe the identifying mark?<span>1:20 PM</span>
-        </div>
-        <div className="bubble mine">
-          There is a small scratch underneath the case.
-          <span>1:22 PM · Read</span>
-        </div>
-        <div className="bubble theirs">
-          Thank you. The admin team will compare this privately with the found
-          item.<span>1:24 PM</span>
-        </div>
+        {loading && <div className="loading-lines"><span /><span /><span /></div>}
+        {error && <div className="form-error">{error}</div>}
+        {!loading && !error && messages.length === 0 && <div className="empty-state">No messages yet. Start the discussion.</div>}
+        {messages.map((message) => (
+          <div className={`bubble ${message.mine ? 'mine' : 'theirs'}`} key={message.id}>
+            {message.content}
+            <span>{message.createdAt ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+          </div>
+        ))}
       </div>
       <div className="composer">
-        <div className="composer-field">Type a message...</div>
-        <div className="send-button">
+        <input className="composer-field" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void send() }} placeholder="Type a message..." maxLength={2000} disabled={!activeClaim || sending} />
+        <div className="send-button" role="button" onClick={() => void send()}>
           <Icon name="send" />
         </div>
       </div>
@@ -1502,75 +2136,107 @@ function Chat({ go }: { go: (s: Screen) => void }) {
   )
 }
 
-function Handover({ go }: { go: (s: Screen) => void }) {
-  const cells = Array.from(
-    { length: 81 },
-    (_, index) => (index * 7 + index * index) % 5 < 2,
-  )
+function Handover({ go, claimId }: { go: (s: Screen) => void; claimId: string | null }) {
+  const [claim, setClaim] = useState<ClaimDto | null>(null)
+  const [item, setItem] = useState<ItemDto | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    const load = async () => {
+      try {
+        const selectedClaim = claimId ? await getClaimById(claimId) : (await getMyClaims())[0] ?? null
+        if (!selectedClaim) {
+          if (active) setError('No claim was found for this handover.')
+          return
+        }
+        const selectedItem = await getItemById(selectedClaim.itemId)
+        if (active) {
+          setClaim(selectedClaim)
+          setItem(selectedItem)
+        }
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load handover status.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    void load()
+    return () => { active = false }
+  }, [claimId])
+
   return (
     <MobilePage go={go}>
       <TopBar title="Item Handover" back={() => go("claim")} />
       <div className="mobile-content">
+        {loading && <div className="loading-lines"><span /><span /><span /></div>}
+        {error && <div className="form-error">{error}</div>}
+        {claim && item && (
+          <>
         <div className="handover-status">
           <div className="success-icon small">
-            <Icon name="check" />
+            <Icon name={item.status === 'RESOLVED' ? 'check' : 'clock'} />
           </div>
           <div>
-            <strong>Handover scheduled</strong>
-            <span>Your claim has been approved</span>
+            <strong>{item.status === 'RESOLVED' ? 'Handover completed' : 'Claim approved'}</strong>
+            <span>{item.status === 'RESOLVED' ? 'The return has been confirmed by staff.' : 'Contact the Lost & Found Desk to arrange collection.'}</span>
           </div>
         </div>
         <Card className="handover-item">
-          <ItemVisual kind="airpods" />
+          <ItemVisual kind="airpods" imageUrl={item.imageUrls?.[0]} />
           <div>
-            <div className="item-name">White AirPods Pro</div>
-            <span>Item #FD-2026-00487</span>
+            <div className="item-name">{item.title}</div>
+            <span>Item #{item.id}</span>
           </div>
-          <Badge tone="blue">READY</Badge>
+          <Badge tone={item.status === 'RESOLVED' ? 'green' : 'blue'}>{item.status}</Badge>
         </Card>
         <Card className="appointment-card">
           <div className="appointment-title">
             <Icon name="pin" />
             KSIT Lost &amp; Found Desk
           </div>
-          <div className="appointment-grid">
-            <div>
-              <Icon name="calendar" />
-              <span>
-                Date<strong>03 Oct 2026</strong>
-              </span>
-            </div>
-            <div>
-              <Icon name="clock" />
-              <span>
-                Time<strong>1:30 PM</strong>
-              </span>
-            </div>
-          </div>
+          <p>Bring your student ID and coordinate collection with authorized KSIT staff.</p>
         </Card>
-        <div className="qr-card">
-          <div className="qr-label">COLLECTION PASS</div>
-          <div className="qr-code">
-            {cells.map((filled, index) => (
-              <span className={filled ? "filled" : ""} key={index} />
-            ))}
-          </div>
-          <span>HANDOVER CODE</span>
-          <strong>739281</strong>
-          <p>
-            Show this QR code or code to authorized KSIT staff during
-            collection.
-          </p>
-        </div>
-        <Button variant="secondary" onClick={() => go("returned")}>
-          VIEW HANDOVER DETAILS
-        </Button>
+        {item.status === 'RESOLVED' && <Button onClick={() => go('returned')}>VIEW RETURN CONFIRMATION</Button>}
+          </>
+        )}
       </div>
     </MobilePage>
   )
 }
 
-function Returned({ go }: { go: (s: Screen) => void }) {
+function Returned({ go, claimId }: { go: (s: Screen) => void; claimId: string | null }) {
+  const [item, setItem] = useState<ItemDto | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      try {
+        const claim = claimId ? await getClaimById(claimId) : (await getMyClaims())[0] ?? null
+        if (!claim) throw new Error('No claim was found for this return.')
+        const data = await getItemById(claim.itemId)
+        if (active) setItem(data)
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load return status.')
+      }
+    }
+    void load()
+    return () => { active = false }
+  }, [claimId])
+
+  if (error || !item || item.status !== 'RESOLVED') {
+    return (
+      <div className="center-screen">
+        <div className="center-title">Return not confirmed yet</div>
+        <p>{error || 'Authorized staff must confirm the handover before this report is marked returned.'}</p>
+        <Button onClick={() => go('handover')}>BACK TO HANDOVER</Button>
+      </div>
+    )
+  }
+
   return (
     <div className="center-screen celebration">
       <div className="confetti c1" />
@@ -1588,11 +2254,11 @@ function Returned({ go }: { go: (s: Screen) => void }) {
         Your item has been successfully returned and the report has been closed.
       </p>
       <Card className="returned-card">
-        <ItemVisual kind="airpods" />
+        <ItemVisual kind="airpods" imageUrl={item.imageUrls?.[0]} />
         <div>
-          <strong>White AirPods Pro</strong>
+          <strong>{item.title}</strong>
           <span>Returned</span>
-          <span>03 Oct 2026 • 1:42 PM</span>
+          <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : ''}</span>
         </div>
         <Badge tone="green">RETURNED</Badge>
       </Card>
@@ -1607,7 +2273,36 @@ function Returned({ go }: { go: (s: Screen) => void }) {
   )
 }
 
-function Reports({ go }: { go: (s: Screen) => void }) {
+function Reports({ go, onSelectItem, onSelectClaim }: {
+  go: (s: Screen) => void
+  onSelectItem: (id: string) => void
+  onSelectClaim: (id: string) => void
+}) {
+  const [items, setItems] = useState<ItemDto[]>([])
+  const [claims, setClaims] = useState<ClaimDto[]>([])
+  const [activeTab, setActiveTab] = useState<'LOST' | 'FOUND' | 'CLAIMS'>('LOST')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    Promise.all([getMyItems({ page: 0, size: 100 }), getMyClaims()])
+      .then(([itemPage, myClaims]) => {
+        if (active) {
+          setItems(itemPage.content ?? [])
+          setClaims(myClaims ?? [])
+        }
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load your reports.')
+      })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
+
+  const displayedItems = items.filter((item) => item.itemType === activeTab)
+
   return (
     <MobilePage current="reports" go={go}>
       <TopBar
@@ -1619,44 +2314,47 @@ function Reports({ go }: { go: (s: Screen) => void }) {
         }
       />
       <div className="tabs">
-        <div className="active">
-          Lost <span>2</span>
+        <div className={activeTab === 'LOST' ? 'active' : ''} role="button" onClick={() => setActiveTab('LOST')}>
+          Lost <span>{items.filter((item) => item.itemType === 'LOST').length}</span>
         </div>
-        <div>
-          Found <span>1</span>
+        <div className={activeTab === 'FOUND' ? 'active' : ''} role="button" onClick={() => setActiveTab('FOUND')}>
+          Found <span>{items.filter((item) => item.itemType === 'FOUND').length}</span>
         </div>
-        <div>
-          Claims <span>1</span>
+        <div className={activeTab === 'CLAIMS' ? 'active' : ''} role="button" onClick={() => setActiveTab('CLAIMS')}>
+          Claims <span>{claims.length}</span>
         </div>
       </div>
       <div className="mobile-content">
+        {error && <div className="form-error">{error}</div>}
         <div className="item-list">
-          <ReportCard
-            name="White AirPods Pro"
-            kind="airpods"
-            type="Lost"
-            status="SEARCHING"
-            tone="orange"
-            progress={38}
-            onClick={() => go("claim")}
-          />
-          <ReportCard
-            name="Black Backpack"
-            kind="backpack"
-            type="Lost"
-            status="MATCH FOUND"
-            tone="blue"
-            progress={68}
-            onClick={() => go("match")}
-          />
-          <ReportCard
-            name="Brown Wallet"
-            kind="keys"
-            type="Found"
-            status="RETURNED"
-            tone="green"
-            progress={100}
-          />
+          {loading ? <div className="loading-lines"><span /><span /><span /></div> : activeTab === 'CLAIMS' ? (
+            claims.length === 0 ? <Card className="empty-state"><strong>No claims yet</strong><span>Claims you submit will be listed here.</span></Card> :
+              claims.map((claim) => (
+                <Card className="report-card" key={claim.id} onClick={() => onSelectClaim(claim.id)}>
+                  <div className="report-main">
+                    <ItemVisual kind="airpods" />
+                    <div><div className="item-name">{claim.itemTitle}</div><span>Submitted {claim.createdAt ? new Date(claim.createdAt).toLocaleDateString() : ''}</span></div>
+                    <Badge tone={claim.status === 'APPROVED' ? 'green' : claim.status === 'REJECTED' ? 'red' : 'orange'}>{claim.status}</Badge>
+                  </div>
+                  <div className="report-foot"><span>Open claim details</span><Icon name="chevron" size="sm" /></div>
+                </Card>
+              ))
+          ) : displayedItems.length === 0 ? (
+            <Card className="empty-state"><strong>No {activeTab.toLowerCase()} reports</strong><span>Your reports will appear here after submission.</span></Card>
+          ) : displayedItems.map((item, index) => (
+            <ReportCard
+              key={item.id}
+              name={item.title}
+              kind={index % 3 === 0 ? 'airpods' : index % 3 === 1 ? 'backpack' : 'keys'}
+              type={item.itemType === 'LOST' ? 'Lost' : 'Found'}
+              status={item.status}
+              tone={item.status === 'RESOLVED' ? 'green' : item.status === 'CLAIMED' ? 'blue' : 'orange'}
+              progress={item.status === 'RESOLVED' ? 100 : item.status === 'CLAIMED' ? 68 : 38}
+              date={item.itemDate ? new Date(item.itemDate).toLocaleDateString() : 'Date not specified'}
+              imageUrl={item.imageUrls?.[0]}
+              onClick={() => onSelectItem(item.id)}
+            />
+          ))}
         </div>
         <Card className="empty-state">
           <div className="empty-icon">
@@ -1680,6 +2378,8 @@ function ReportCard({
   status,
   tone,
   progress,
+  date,
+  imageUrl,
   onClick,
 }: {
   name: string
@@ -1688,15 +2388,17 @@ function ReportCard({
   status: string
   tone: "orange" | "blue" | "green"
   progress: number
+  date?: string
+  imageUrl?: string
   onClick?: () => void
 }) {
   return (
     <Card className="report-card" onClick={onClick}>
       <div className="report-main">
-        <ItemVisual kind={kind} />
+        <ItemVisual kind={kind} imageUrl={imageUrl} />
         <div>
           <div className="item-name">{name}</div>
-          <span>{type} • 02 Oct 2026</span>
+          <span>{type} • {date ?? 'Date not specified'}</span>
         </div>
         <Badge tone={tone}>{status}</Badge>
       </div>
@@ -1717,66 +2419,98 @@ function ReportCard({
   )
 }
 
-function Notifications({ go }: { go: (s: Screen) => void }) {
-  const notes: Array<[IconName, string, string, string, Screen]> = [
-    [
-      "target",
-      "Possible match found",
-      "A found item may match your AirPods report.",
-      "Just now",
-      "match",
-    ],
-    [
-      "check",
-      "Claim approved",
-      "Your ownership claim has been approved.",
-      "12 min ago",
-      "handover",
-    ],
-    [
-      "message",
-      "New message",
-      "The finder responded to your message.",
-      "1 hour ago",
-      "chat",
-    ],
-    [
-      "pin",
-      "Handover scheduled",
-      "Your item collection has been scheduled.",
-      "Yesterday",
-      "handover",
-    ],
-    [
-      "box",
-      "Item returned",
-      "Your lost item has been successfully returned.",
-      "2 days ago",
-      "returned",
-    ],
-  ]
+function Notifications({ go, onOpenItem }: { go: (s: Screen) => void; onOpenItem: (id: string) => void }) {
+  const [notes, setNotes] = useState<Awaited<ReturnType<typeof getNotifications>>>([])
+  const [loading, setLoading] = useState(false)
+  const [markingRead, setMarkingRead] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    const load = async () => {
+      setLoading(true)
+      try {
+        const data = await getNotifications()
+        if (active) setNotes(Array.isArray(data) ? data : [])
+      } catch (loadError) {
+        if (active) {
+          setNotes([])
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load notifications.')
+        }
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const handleMarkAllRead = async () => {
+    try {
+      setMarkingRead(true)
+      setError('')
+      await markAllNotificationsRead()
+      const refreshed = await getNotifications()
+      setNotes(Array.isArray(refreshed) ? refreshed : [])
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to mark notifications as read.')
+    } finally {
+      setMarkingRead(false)
+    }
+  }
+
+  const openNotification = async (item: Awaited<ReturnType<typeof getNotifications>>[number]) => {
+    try {
+      if (!item.read) {
+        await markNotificationRead(item.id)
+        setNotes((current) => current.map((note) => note.id === item.id ? { ...note, read: true } : note))
+      }
+      if (item.itemId) onOpenItem(item.itemId)
+      else go('home')
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to open this notification.')
+    }
+  }
+
   return (
     <MobilePage go={go}>
       <TopBar
         title="Notifications"
         back={() => go("home")}
-        right={<div className="text-action">Mark all read</div>}
+        right={
+          <div className="text-action" role="button" onClick={handleMarkAllRead}>
+            {markingRead ? "Updating..." : "Mark all read"}
+          </div>
+        }
       />
       <div className="mobile-content">
         <div className="notification-group-label">NEW</div>
-        {notes.map(([icon, title, copy, time, screen], index) => (
+        {error && <div className="form-error">{error}</div>}
+        {loading ? (
+          <div className="loading-lines"><span /><span /><span /></div>
+        ) : notes.length === 0 ? (
+          <Card className="empty-state">
+            <div className="empty-icon"><Icon name="bell" /></div>
+            <strong>No notifications</strong>
+            <span>Your campus updates will appear here.</span>
+          </Card>
+        ) : notes.map((item, index) => (
           <Card
-            className={`notification-card ${index < 2 ? "unread" : ""}`}
-            onClick={() => go(screen)}
-            key={title}
+            className={`notification-card ${item.read ? "" : "unread"}`}
+            onClick={() => void openNotification(item)}
+            key={item.id}
           >
-            <div className={`notification-icon note-${index}`}>
-              <Icon name={icon} />
+            <div className={`notification-icon note-${index % 5}`}>
+              <Icon name="bell" />
             </div>
             <div>
-              <strong>{title}</strong>
-              <p>{copy}</p>
-              <span>{time}</span>
+              <strong>{item.type.replace(/_/g, ' ')}</strong>
+              <p>{item.message}</p>
+              <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : "Just now"}</span>
             </div>
             <Icon name="chevron" size="sm" />
           </Card>
@@ -1788,6 +2522,91 @@ function Notifications({ go }: { go: (s: Screen) => void }) {
 
 function Profile({ go }: { go: (s: Screen) => void }) {
   const [logoutDialog, setLogoutDialog] = useState(false)
+  const [profile, setProfile] = useState<UserDto | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [error, setError] = useState('')
+  const [itemCounts, setItemCounts] = useState({ lost: 0, found: 0, resolved: 0 })
+  const [nameDraft, setNameDraft] = useState('')
+  const [phoneDraft, setPhoneDraft] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    const load = async () => {
+      setLoading(true)
+      try {
+        const [data, itemPage] = await Promise.all([getUserProfile(), getMyItems({ page: 0, size: 100 })])
+        if (active) {
+          setProfile(data)
+          setNameDraft(data.name)
+          setPhoneDraft(data.phone ?? '')
+          setItemCounts({
+            lost: itemPage.content.filter((item) => item.itemType === 'LOST').length,
+            found: itemPage.content.filter((item) => item.itemType === 'FOUND').length,
+            resolved: itemPage.content.filter((item) => item.status === 'RESOLVED').length,
+          })
+        }
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load your profile.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const name = profile?.name || "Your profile"
+  const initials = name
+    .split(" ")
+    .map((part: string) => part[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase() || "?"
+  const phone = profile?.phone || "Phone not added"
+  const email = profile?.email || ""
+
+  const saveProfile = async () => {
+    if (!nameDraft.trim()) {
+      setError('Name is required.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const updated = await updateUserProfile({ name: nameDraft.trim(), phone: phoneDraft })
+      setProfile(updated)
+      setEditing(false)
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Unable to save profile.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleProfileImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setUploadingImage(true)
+    setError('')
+    try {
+      const uploaded = await uploadImage(file)
+      const updated = await updateUserProfile({ profileImage: uploaded.url })
+      setProfile(updated)
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Unable to update profile image.')
+    } finally {
+      setUploadingImage(false)
+      event.target.value = ''
+    }
+  }
+
   const menus: Array<[IconName, string, Screen]> = [
     ["file", "My Reports", "reports"],
     ["shield", "My Claims", "claim"],
@@ -1796,35 +2615,47 @@ function Profile({ go }: { go: (s: Screen) => void }) {
     ["settings", "Security & Privacy", "privacy"],
     ["users", "Help & Support", "home"],
   ]
+
   return (
     <MobilePage current="profile" go={go}>
       <TopBar title="My Profile" />
       <div className="profile-hero">
-        <div className="profile-avatar">
-          RK
+        <label className="profile-avatar" title="Update profile photo">
+          {profile?.profileImage ? <img className="profile-photo" src={resolveMediaUrl(profile.profileImage)} alt="Profile" /> : initials}
           <span>
             <Icon name="camera" size="sm" />
           </span>
-        </div>
-        <div className="profile-name">Rahul Kumar</div>
-        <span>1KS23CS001</span>
+          <input className="upload-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleProfileImage} disabled={uploadingImage} />
+        </label>
+        <div className="profile-name">{loading ? "Loading profile..." : name}</div>
+        {!editing ? <span>{phone}</span> : (
+          <div className="form-stack">
+            <Field label="Full name" value={nameDraft} editable onChange={(event) => setNameDraft(event.target.value)} />
+            <Field label="Phone" value={phoneDraft} editable onChange={(event) => setPhoneDraft(event.target.value)} />
+          </div>
+        )}
         <p>
-          Computer Science &amp; Engineering
+          {email}
           <br />
-          7th Semester
+          {profile?.role || "STUDENT"}
         </p>
+        <div className="text-action" role="button" onClick={editing ? saveProfile : () => setEditing(true)}>
+          {saving ? 'Saving...' : editing ? 'Save profile' : 'Edit profile'}
+        </div>
+        {uploadingImage && <span>Uploading profile photo...</span>}
       </div>
+      {error && <div className="form-error">{error}</div>}
       <div className="stats-row">
         <div>
-          <strong>3</strong>
+          <strong>{itemCounts.lost}</strong>
           <span>Lost</span>
         </div>
         <div>
-          <strong>2</strong>
+          <strong>{itemCounts.found}</strong>
           <span>Found</span>
         </div>
         <div>
-          <strong>1</strong>
+          <strong>{itemCounts.resolved}</strong>
           <span>Returned</span>
         </div>
       </div>
@@ -1852,9 +2683,11 @@ function Profile({ go }: { go: (s: Screen) => void }) {
         >
           LOGOUT
         </Button>
-        <div className="admin-link" role="button" onClick={() => go("admin")}>
-          <Icon name="shield" size="sm" /> Open KSIT Admin Portal
-        </div>
+        {profile?.role === 'ADMIN' && (
+          <div className="admin-link" role="button" onClick={() => go("admin")}>
+            <Icon name="shield" size="sm" /> Open KSIT Admin Portal
+          </div>
+        )}
       </div>
       {logoutDialog && (
         <Modal
@@ -1864,7 +2697,10 @@ function Profile({ go }: { go: (s: Screen) => void }) {
           action="LOGOUT"
           destructive
           onClose={() => setLogoutDialog(false)}
-          onAction={() => go("login")}
+          onAction={() => {
+            clearAuthToken()
+            go("login")
+          }}
         />
       )}
     </MobilePage>
@@ -1937,7 +2773,7 @@ const sidebarItems: Array<[IconName, string, Screen]> = [
   ["file", "Found Reports", "admin-items"],
   ["shield", "Claims", "admin-claim"],
   ["pin", "Handovers", "admin-handover"],
-  ["users", "Users", "admin-items"],
+  ["users", "Users", "admin-users"],
   ["warning", "Reports & Abuse", "admin-items"],
   ["chart", "Analytics", "analytics"],
   ["settings", "Settings", "privacy"],
@@ -2009,24 +2845,111 @@ function AdminLayout({
 }
 
 function AdminDashboard({ go }: { go: (s: Screen) => void }) {
+  const [stats, setStats] = useState<Awaited<ReturnType<typeof getAdminStats>> | null>(null)
+  const [items, setItems] = useState<ItemDto[]>([])
+  const [claims, setClaims] = useState<ClaimDto[]>([])
+  const [notifications, setNotifications] = useState<Awaited<ReturnType<typeof getNotifications>>>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    const load = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const [data, itemList, claimList, notificationList] = await Promise.all([
+          getAdminStats(),
+          getAdminItems(),
+          getAdminClaims(),
+          getNotifications(),
+        ])
+        if (active) {
+          setStats(data)
+          setItems(itemList)
+          setClaims(claimList)
+          setNotifications(notificationList)
+        }
+      } catch (loadError) {
+        if (active) {
+          setStats(null)
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load the admin dashboard.')
+        }
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    void load()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const monthLabels = Array.from({ length: 6 }, (_, index) => {
+    const date = new Date()
+    date.setDate(1)
+    date.setMonth(date.getMonth() - 5 + index)
+    return date
+  })
+  const monthlyCounts = monthLabels.map((month) => {
+    const monthItems = items.filter((item) => {
+      if (!item.createdAt) return false
+      const date = new Date(item.createdAt)
+      return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth()
+    })
+    return {
+      lost: monthItems.filter((item) => item.itemType === 'LOST').length,
+      found: monthItems.filter((item) => item.itemType === 'FOUND').length,
+      returned: monthItems.filter((item) => item.status === 'RESOLVED').length,
+    }
+  })
+  const pathFor = (values: number[]) => {
+    const max = Math.max(1, ...monthlyCounts.flatMap((count) => [count.lost, count.found, count.returned]))
+    return values.map((value, index) => {
+      const x = index * 600 / Math.max(1, values.length - 1)
+      const y = 165 - value / max * 130
+      return `${index === 0 ? 'M' : 'L'}${x} ${y}`
+    }).join(' ')
+  }
+  const locationCounts = Object.entries(items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.location] = (counts[item.location] ?? 0) + 1
+    return counts
+  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  const maxLocationCount = Math.max(1, ...locationCounts.map(([, count]) => count))
+  const pendingClaims = claims.filter((claim) => claim.status === 'PENDING')
+  const approvedClaims = claims.filter((claim) => claim.status === 'APPROVED')
+  const itemReports = notifications.filter((notification) => notification.type === 'ITEM_REPORTED' && !notification.read)
+  const lostPercentage = stats && stats.totalItems > 0 ? stats.lostItems / stats.totalItems * 100 : 0
+  const openAdminTask = (icon: string) => {
+    if (icon === 'shield') go('notifications')
+    else if (icon === 'pin') go('admin-handover')
+    else go('admin-claim')
+  }
+
   const metrics: Array<[string, string, string, IconName]> = [
-    ["124", "Total Items", "+12 this month", "box"],
-    ["78", "Lost", "63% of reports", "search"],
-    ["46", "Found", "37% of reports", "file"],
-    ["17", "Pending Claims", "Needs attention", "shield"],
-    ["51", "Returned", "41% recovery rate", "check"],
-    ["12", "Pending Reviews", "4 urgent", "clock"],
+    [String(stats?.totalItems ?? 0), "Total Items", stats ? "Current reports" : "Live data unavailable", "box"],
+    [String(stats?.lostItems ?? 0), "Lost", "Lost reports", "search"],
+    [String(stats?.foundItems ?? 0), "Found", "Found reports", "file"],
+    [String(stats?.activeClaims ?? 0), "Pending Claims", "Needs attention", "shield"],
+    [String(stats?.resolvedItems ?? 0), "Resolved", "Resolved reports", "check"],
+    [String(stats?.activeClaims ?? 0), "Pending Reviews", "Claims awaiting review", "clock"],
   ]
+
   return (
     <AdminLayout
       current="admin"
       go={go}
       title="Dashboard"
-      subtitle="Campus lost & found overview • 02 October 2026"
+      subtitle={stats ? `Live admin overview • ${new Date().toLocaleDateString()}` : "Live campus lost & found overview"}
     >
       <div className="admin-content">
+        {error && <div className="form-error">{error}</div>}
         <div className="metric-grid">
-          {metrics.map(([value, label, note, icon], index) => (
+          {loading ? (
+            <div className="loading-lines" style={{ gridColumn: '1 / -1' }}><span /><span /><span /></div>
+          ) : metrics.map(([value, label, note, icon], index) => (
             <Card className={`metric-card metric-${index}`} key={label}>
               <div className="metric-icon">
                 <Icon name={icon} />
@@ -2060,24 +2983,19 @@ function AdminDashboard({ go }: { go: (s: Screen) => void }) {
                 />
                 <path
                   className="line lost-line"
-                  d="M0 140 C60 130 80 88 130 100 S220 55 280 85 S360 30 420 60 S510 20 600 35"
+                  d={pathFor(monthlyCounts.map((count) => count.lost))}
                 />
                 <path
                   className="line found-line"
-                  d="M0 155 C70 145 90 120 140 130 S230 90 290 110 S390 75 440 90 S520 55 600 70"
+                  d={pathFor(monthlyCounts.map((count) => count.found))}
                 />
                 <path
                   className="line return-line"
-                  d="M0 165 C80 155 100 145 160 150 S260 120 320 130 S410 100 470 110 S540 80 600 88"
+                  d={pathFor(monthlyCounts.map((count) => count.returned))}
                 />
               </svg>
               <div className="axis">
-                <span>May</span>
-                <span>Jun</span>
-                <span>Jul</span>
-                <span>Aug</span>
-                <span>Sep</span>
-                <span>Oct</span>
+                {monthLabels.map((month) => <span key={`${month.getFullYear()}-${month.getMonth()}`}>{month.toLocaleDateString(undefined, { month: 'short' })}</span>)}
               </div>
             </div>
           </Card>
@@ -2088,20 +3006,20 @@ function AdminDashboard({ go }: { go: (s: Screen) => void }) {
                 <span>Current semester</span>
               </div>
             </div>
-            <div className="donut">
+            <div className="donut" style={{ background: `conic-gradient(var(--color-brand) 0 ${lostPercentage}%, var(--color-success) ${lostPercentage}% 100%)` }}>
               <div>
-                <strong>124</strong>
+                <strong>{stats?.totalItems ?? 0}</strong>
                 <span>Total items</span>
               </div>
             </div>
             <div className="donut-stats">
               <span>
                 <i className="blue-dot" />
-                Lost <strong>78</strong>
+                Lost <strong>{stats?.lostItems ?? 0}</strong>
               </span>
               <span>
                 <i className="green-dot" />
-                Found <strong>46</strong>
+                Found <strong>{stats?.foundItems ?? 0}</strong>
               </span>
             </div>
           </Card>
@@ -2118,21 +3036,16 @@ function AdminDashboard({ go }: { go: (s: Screen) => void }) {
               </div>
             </div>
             <div className="bar-list">
-              {[
-                ["Library", 82],
-                ["Canteen", 68],
-                ["Academic Block", 55],
-                ["Parking", 39],
-                ["Sports Area", 25],
-              ].map(([label, amount]) => (
+              {locationCounts.map(([label, count]) => (
                 <div className="bar-row" key={label}>
                   <span>{label}</span>
                   <div>
-                    <i style={{ width: `${amount}%` }} />
+                    <i style={{ width: `${count / maxLocationCount * 100}%` }} />
                   </div>
-                  <strong>{Math.round(Number(amount) / 4)}</strong>
+                  <strong>{count}</strong>
                 </div>
               ))}
+              {!loading && locationCounts.length === 0 && <div className="empty-state">No reports by location yet.</div>}
             </div>
           </Card>
           <Card className="activity-card">
@@ -2143,11 +3056,16 @@ function AdminDashboard({ go }: { go: (s: Screen) => void }) {
               </div>
             </div>
             {[
-              ["Claim waiting 26 hours", "White AirPods Pro", "warning"],
-              ["Handover today, 1:30 PM", "Rahul Kumar", "pin"],
-              ["Listing reported by user", "Black Smartphone", "shield"],
+              ...pendingClaims.slice(0, 3).map((claim) => {
+                const hours = claim.createdAt ? Math.max(0, Math.floor((Date.now() - new Date(claim.createdAt).getTime()) / 3600000)) : 0
+                return [`Claim waiting ${hours} hours`, claim.itemTitle, 'warning'] as const
+              }),
+              ...approvedClaims.slice(0, Math.max(0, 3 - pendingClaims.length)).map((claim) =>
+                ['Handover awaiting confirmation', claim.itemTitle, 'pin'] as const),
+              ...itemReports.slice(0, Math.max(0, 3 - pendingClaims.length - approvedClaims.length)).map((notification) =>
+                ['Listing reported', notification.message, 'shield'] as const),
             ].map(([title, copy, icon]) => (
-              <div className="activity-row" key={title}>
+              <div className="activity-row" key={title} role="button" tabIndex={0} onClick={() => openAdminTask(icon)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') openAdminTask(icon) }}>
                 <div>
                   <Icon name={icon as IconName} />
                 </div>
@@ -2158,6 +3076,9 @@ function AdminDashboard({ go }: { go: (s: Screen) => void }) {
                 <Icon name="chevron" size="sm" />
               </div>
             ))}
+            {!loading && pendingClaims.length === 0 && approvedClaims.length === 0 && itemReports.length === 0 && (
+              <div className="empty-state">No claims need attention.</div>
+            )}
           </Card>
         </div>
       </div>
@@ -2165,49 +3086,50 @@ function AdminDashboard({ go }: { go: (s: Screen) => void }) {
   )
 }
 
-const tableRows = [
-  [
-    "Black Smartphone",
-    "Lost",
-    "Electronics",
-    "Library",
-    "Rahul",
-    "02 Oct",
-    "Matching",
-  ],
-  [
-    "Black Backpack",
-    "Found",
-    "Bags",
-    "Academic Block",
-    "Aman",
-    "02 Oct",
-    "Claimed",
-  ],
-  ["Keychain", "Found", "Keys", "Canteen", "Priya", "01 Oct", "Pending"],
-  [
-    "College ID Card",
-    "Found",
-    "ID Cards",
-    "Main Block",
-    "Staff",
-    "01 Oct",
-    "Approved",
-  ],
-  [
-    "Casio Calculator",
-    "Lost",
-    "Electronics",
-    "Lab 3",
-    "Sneha",
-    "30 Sep",
-    "Searching",
-  ],
-]
-
 function AdminItems({ go }: { go: (s: Screen) => void }) {
-  const [activeActions, setActiveActions] = useState<number | null>(null)
-  const [closeDialog, setCloseDialog] = useState(false)
+  const [items, setItems] = useState<ItemDto[]>([])
+  const [search, setSearch] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [tabFilter, setTabFilter] = useState<'ALL' | 'LOST' | 'FOUND' | 'REVIEW'>('ALL')
+  const [activeActions, setActiveActions] = useState<string | null>(null)
+  const [itemToClose, setItemToClose] = useState<ItemDto | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const loadItems = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      setItems(await getAdminItems())
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load admin items.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadItems() }, [])
+
+  const visibleItems = items.filter((item) => {
+    const matchesSearch = `${item.title} ${item.category} ${item.location} ${item.reporter?.name ?? ''}`
+      .toLowerCase().includes(search.toLowerCase())
+    const matchesTab = tabFilter === 'ALL'
+      || item.itemType === tabFilter
+      || (tabFilter === 'REVIEW' && (item.status === 'LOST' || item.status === 'FOUND'))
+    return matchesSearch && matchesTab
+      && (!categoryFilter || item.category.toLowerCase().includes(categoryFilter.toLowerCase()))
+      && (!statusFilter || item.status === statusFilter)
+  })
+  const selectTab = (filter: typeof tabFilter) => setTabFilter(filter)
+  const selectTabOnKey = (event: React.KeyboardEvent<HTMLSpanElement>, filter: typeof tabFilter) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selectTab(filter)
+    }
+  }
+
   return (
     <AdminLayout
       current="admin-items"
@@ -2219,25 +3141,45 @@ function AdminItems({ go }: { go: (s: Screen) => void }) {
         <div className="table-tools">
           <div className="search-wide">
             <Icon name="search" />
-            Search items, users or report IDs
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items, users or report IDs" />
           </div>
-          <div className="filter-button">
+          <div className="filter-button" role="button" tabIndex={0} onClick={() => setFilterOpen((open) => !open)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setFilterOpen((open) => !open) }}>
             <Icon name="settings" /> Filters
           </div>
-          <Button wide={false}>+ ADD ITEM</Button>
+          <Button wide={false} onClick={() => go("lost-item")}>+ ADD ITEM</Button>
         </div>
+        {filterOpen && (
+          <Card className="filter-panel">
+            <div className="filter-title">Filter reports</div>
+            <div className="filter-grid">
+              <Field label="Category" value={categoryFilter} placeholder="Any category" editable onChange={(event) => setCategoryFilter(event.target.value)} />
+              <label className="field-wrap">
+                <span className="field-label">Status</span>
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                  <option value="">Any status</option>
+                  <option value="LOST">Lost</option>
+                  <option value="FOUND">Found</option>
+                  <option value="CLAIMED">Claimed</option>
+                  <option value="RESOLVED">Resolved</option>
+                </select>
+              </label>
+            </div>
+            <Button wide={false} variant="secondary" onClick={() => { setCategoryFilter(''); setStatusFilter(''); setFilterOpen(false) }}>CLEAR FILTERS</Button>
+          </Card>
+        )}
+        {error && <div className="form-error">{error}</div>}
         <div className="admin-tabs">
-          <span className="active">
-            All Items <b>124</b>
+          <span className={tabFilter === 'ALL' ? 'active' : ''} role="button" tabIndex={0} onClick={() => selectTab('ALL')} onKeyDown={(event) => selectTabOnKey(event, 'ALL')}>
+            All Items <b>{items.length}</b>
           </span>
-          <span>
-            Lost <b>78</b>
+          <span className={tabFilter === 'LOST' ? 'active' : ''} role="button" tabIndex={0} onClick={() => selectTab('LOST')} onKeyDown={(event) => selectTabOnKey(event, 'LOST')}>
+            Lost <b>{items.filter((item) => item.itemType === 'LOST').length}</b>
           </span>
-          <span>
-            Found <b>46</b>
+          <span className={tabFilter === 'FOUND' ? 'active' : ''} role="button" tabIndex={0} onClick={() => selectTab('FOUND')} onKeyDown={(event) => selectTabOnKey(event, 'FOUND')}>
+            Found <b>{items.filter((item) => item.itemType === 'FOUND').length}</b>
           </span>
-          <span>
-            Needs Review <b>12</b>
+          <span className={tabFilter === 'REVIEW' ? 'active' : ''} role="button" tabIndex={0} onClick={() => selectTab('REVIEW')} onKeyDown={(event) => selectTabOnKey(event, 'REVIEW')}>
+            Needs Review <b>{items.filter((item) => item.status === 'FOUND' || item.status === 'LOST').length}</b>
           </span>
         </div>
         <Card className="data-table">
@@ -2255,36 +3197,29 @@ function AdminItems({ go }: { go: (s: Screen) => void }) {
               <span key={h}>{h}</span>
             ))}
           </div>
-          {tableRows.map((row, index) => (
-            <div className="table-row" key={row[0]}>
+          {loading ? <div className="loading-lines"><span /><span /><span /></div> : visibleItems.map((item, index) => (
+            <div className="table-row" key={item.id}>
               <div className="table-item">
                 <ItemVisual
-                  kind={
-                    index === 0 ? "phone" : index === 1 ? "backpack" : "keys"
-                  }
+                  kind={index % 3 === 0 ? "phone" : index % 3 === 1 ? "backpack" : "keys"}
+                  imageUrl={item.imageUrls?.[0]}
                 />
-                <strong>{row[0]}</strong>
+                <strong>{item.title}</strong>
               </div>
               <span>
-                <Badge tone={row[1] === "Lost" ? "red" : "green"}>
-                  {row[1].toUpperCase()}
+                <Badge tone={item.itemType === "LOST" ? "red" : "green"}>
+                  {item.itemType}
                 </Badge>
               </span>
-              <span>{row[2]}</span>
-              <span>{row[3]}</span>
-              <span>{row[4]}</span>
-              <span>{row[5]}</span>
+              <span>{item.category}</span>
+              <span>{item.location}</span>
+              <span>{item.reporter?.name ?? 'Unknown'}</span>
+              <span>{item.itemDate ? new Date(item.itemDate).toLocaleDateString() : '—'}</span>
               <span>
                 <Badge
-                  tone={
-                    row[6] === "Pending"
-                      ? "orange"
-                      : row[6] === "Claimed" || row[6] === "Matching"
-                        ? "blue"
-                        : "green"
-                  }
+                  tone={item.status === "CLAIMED" ? "blue" : item.status === "RESOLVED" ? "green" : "orange"}
                 >
-                  {row[6].toUpperCase()}
+                  {item.status}
                 </Badge>
               </span>
               <div className="row-actions">
@@ -2298,24 +3233,19 @@ function AdminItems({ go }: { go: (s: Screen) => void }) {
                 <div
                   className="more-action"
                   role="button"
-                  onClick={() =>
-                    setActiveActions(activeActions === index ? null : index)
-                  }
+                  onClick={() => setActiveActions(activeActions === item.id ? null : item.id)}
                 >
                   •••
                 </div>
-                {activeActions === index && (
+                {activeActions === item.id && (
                   <div className="row-action-menu">
                     <div role="button" onClick={() => go("admin-claim")}>
-                      <Icon name="check" size="sm" /> Approve
-                    </div>
-                    <div role="button">
-                      <Icon name="message" size="sm" /> Contact User
+                      <Icon name="check" size="sm" /> Review claims
                     </div>
                     <div
                       role="button"
                       className="danger"
-                      onClick={() => setCloseDialog(true)}
+                      onClick={() => setItemToClose(item)}
                     >
                       <Icon name="close" size="sm" /> Close Report
                     </div>
@@ -2324,29 +3254,30 @@ function AdminItems({ go }: { go: (s: Screen) => void }) {
               </div>
             </div>
           ))}
+          {!loading && visibleItems.length === 0 && <div className="empty-state">No items found.</div>}
           <div className="table-footer">
-            <span>Showing 1–5 of 124 items</span>
-            <div>
-              <span>Previous</span>
-              <b>1</b>
-              <span>2</span>
-              <span>3</span>
-              <span>Next</span>
-            </div>
+            <span>Showing {visibleItems.length} of {items.length} items</span>
           </div>
         </Card>
       </div>
-      {closeDialog && (
+      {itemToClose && (
         <Modal
           icon="warning"
           title="Close this report?"
           copy="This removes the report from active matching. The action is recorded and can be reviewed by an administrator."
           action="CLOSE REPORT"
           destructive
-          onClose={() => setCloseDialog(false)}
-          onAction={() => {
-            setCloseDialog(false)
-            setActiveActions(null)
+          onClose={() => setItemToClose(null)}
+          onAction={async () => {
+            try {
+              await setAdminItemStatus(itemToClose.id, 'RESOLVED')
+              setItemToClose(null)
+              setActiveActions(null)
+              await loadItems()
+            } catch (actionError) {
+              setError(actionError instanceof Error ? actionError.message : 'Unable to close this report.')
+              setItemToClose(null)
+            }
           }}
         />
       )}
@@ -2354,9 +3285,82 @@ function AdminItems({ go }: { go: (s: Screen) => void }) {
   )
 }
 
+function AdminUsers({ go }: { go: (s: Screen) => void }) {
+  const [users, setUsers] = useState<UserDto[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    getAdminUsers()
+      .then((data) => { if (active) setUsers(data) })
+      .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load users.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
+
+  const changeRole = async (user: UserDto, role: UserDto['role']) => {
+    setSavingId(user.id)
+    setError('')
+    try {
+      const updated = await updateAdminUserRole(user.id, role)
+      setUsers((current) => current.map((entry) => entry.id === updated.id ? updated : entry))
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update user role.')
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  const visibleUsers = users.filter((user) => `${user.name} ${user.email} ${user.role}`.toLowerCase().includes(query.toLowerCase()))
+
+  return (
+    <AdminLayout current="admin-users" go={go} title="User Management" subtitle="Manage campus roles and account access">
+      <div className="admin-content">
+        <div className="table-tools">
+          <div className="search-wide"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search users by name, email, or role" /></div>
+        </div>
+        {error && <div className="form-error">{error}</div>}
+        <Card className="data-table">
+          <div className="table-row table-header">
+            <span>Name</span><span>Email</span><span>Phone</span><span>Role</span><span>Joined</span><span>Access</span>
+          </div>
+          {loading ? <div className="loading-lines"><span /><span /><span /></div> : visibleUsers.map((user) => (
+            <div className="table-row" key={user.id}>
+              <strong>{user.name}</strong>
+              <span>{user.email}</span>
+              <span>{user.phone || '—'}</span>
+              <span><Badge tone={user.role === 'ADMIN' ? 'blue' : user.role === 'STAFF' ? 'orange' : 'green'}>{user.role}</Badge></span>
+              <span>{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—'}</span>
+              <span>
+                <select value={user.role} disabled={savingId === user.id} onChange={(event) => void changeRole(user, event.target.value as UserDto['role'])}>
+                  <option value="STUDENT">STUDENT</option>
+                  <option value="STAFF">STAFF</option>
+                  <option value="ADMIN">ADMIN</option>
+                </select>
+              </span>
+            </div>
+          ))}
+          {!loading && visibleUsers.length === 0 && <div className="empty-state">No users found.</div>}
+        </Card>
+      </div>
+    </AdminLayout>
+  )
+}
+
 function AdminClaim({ go }: { go: (s: Screen) => void }) {
-  const [checks, setChecks] = useState([true, true, false, true, false])
+  const [checks, setChecks] = useState([false, false, false, false, false])
   const [rejectDialog, setRejectDialog] = useState(false)
+  const [claims, setClaims] = useState<ClaimDto[]>([])
+  const [selectedClaim, setSelectedClaim] = useState<ClaimDto | null>(null)
+  const [reviewItem, setReviewItem] = useState<ItemDto | null>(null)
+  const [users, setUsers] = useState<UserDto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const labels = [
     "Student identity verified",
     "Item description matches",
@@ -2364,72 +3368,112 @@ function AdminClaim({ go }: { go: (s: Screen) => void }) {
     "Finder information verified",
     "Handover location confirmed",
   ]
+
+  const loadClaims = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const [data, userList] = await Promise.all([getAdminClaims(), getAdminUsers()])
+      setClaims(data)
+      setSelectedClaim(data.find((claim) => claim.status === 'PENDING') ?? data[0] ?? null)
+      setUsers(userList)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load claims.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadClaims() }, [])
+
+  useEffect(() => {
+    if (!selectedClaim) {
+      setReviewItem(null)
+      return
+    }
+    let active = true
+    setReviewItem(null)
+    getItemById(selectedClaim.itemId)
+      .then((item) => { if (active) setReviewItem(item) })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load the reported item.')
+      })
+    return () => { active = false }
+  }, [selectedClaim?.itemId])
+
+  const claimant = users.find((user) => user.id === selectedClaim?.userId)
+  const reporterEmail = reviewItem?.reporter?.email
+
+  const reviewClaim = async (status: 'APPROVED' | 'REJECTED') => {
+    if (!selectedClaim) return
+    if (status === 'APPROVED' && checks.some((checked) => !checked)) {
+      setError('Complete the verification checklist before approving this claim.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const updated = await updateClaimStatus(selectedClaim.id, status)
+      setSelectedClaim(updated)
+      setClaims((current) => current.map((claim) => claim.id === updated.id ? updated : claim))
+      setRejectDialog(false)
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to update this claim.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <AdminLayout
       current="admin-claim"
       go={go}
       title="Claim Review"
-      subtitle="Claim #CL-2026-00042 • Submitted 02 Oct 2026"
+      subtitle={selectedClaim ? `Claim #${selectedClaim.id} • ${selectedClaim.status}` : 'Review pending ownership claims'}
     >
       <div className="admin-content">
+        {error && <div className="form-error">{error}</div>}
+        {claims.length > 1 && (
+          <div className="field-wrap">
+            <label className="field-label" htmlFor="claim-select">Select claim</label>
+            <select id="claim-select" value={selectedClaim?.id ?? ''} onChange={(event) => setSelectedClaim(claims.find((claim) => claim.id === event.target.value) ?? null)}>
+              {claims.map((claim) => <option key={claim.id} value={claim.id}>{claim.itemTitle} — {claim.status}</option>)}
+            </select>
+          </div>
+        )}
+        {loading ? <div className="loading-lines"><span /><span /><span /></div> : !selectedClaim ? (
+          <Card className="empty-state"><strong>No claims to review</strong><span>Submitted ownership claims will appear here.</span></Card>
+        ) : (
         <div className="claim-review-grid">
           <div className="review-column">
             <Card className="admin-item-summary">
               <ItemVisual kind="airpods" large />
               <div>
                 <Badge tone="green">FOUND</Badge>
-                <div className="admin-card-title">White AirPods Pro</div>
-                <span>Item #FD-2026-00487</span>
+                <div className="admin-card-title">{selectedClaim.itemTitle}</div>
+                <span>Item #{selectedClaim.itemId}</span>
                 <div className="mini-details">
                   <div>
-                    <span>Found at</span>
-                    <strong>Canteen</strong>
+                    <span>Reported at</span>
+                    <strong>{reviewItem?.location ?? 'Loading…'}</strong>
                   </div>
                   <div>
-                    <span>Found on</span>
-                    <strong>02 Oct, 1:40 PM</strong>
+                    <span>Reported on</span>
+                    <strong>{reviewItem?.itemDate ? new Date(reviewItem.itemDate).toLocaleString() : '—'}</strong>
                   </div>
                   <div>
                     <span>Currently</span>
-                    <strong>L&amp;F Desk</strong>
+                    <strong>{reviewItem?.custodyLocation || reviewItem?.status || '—'}</strong>
                   </div>
                 </div>
               </div>
             </Card>
             <Card className="evidence-card">
               <SectionTitle title="REPORTED DESCRIPTION" />
-              <p>
-                White Apple AirPods Pro found near the canteen west entrance.
-              </p>
-              <SectionTitle title="PRIVATE OWNERSHIP DETAILS" />
-              <div className="private-evidence">
-                <Icon name="lock" />
-                <p>
-                  Small scratch underneath the charging case. Left earbud has a
-                  faint blue ink mark.
-                </p>
-              </div>
+              <p>{reviewItem?.description ?? 'Loading item description…'}</p>
+              {(reviewItem?.brand || reviewItem?.color) && <p>{[reviewItem.brand, reviewItem.color].filter(Boolean).join(' · ')}</p>}
               <SectionTitle title="CLAIM ANSWERS" />
-              <div className="answer-row">
-                <span>Identifying feature</span>
-                <strong>Small scratch underneath the case</strong>
-              </div>
-              <div className="answer-row">
-                <span>Approximate time lost</span>
-                <strong>1:15 PM</strong>
-              </div>
-              <div className="answer-row">
-                <span>Last seen</span>
-                <strong>Near the west-side juice counter</strong>
-              </div>
-              <SectionTitle title="UPLOADED PROOF" />
-              <div className="proof-card">
-                <Icon name="file" />
-                <span>
-                  <strong>AirPods_purchase_receipt.pdf</strong>PDF • 284 KB
-                </span>
-                <div className="text-action">View</div>
-              </div>
+              <div className="private-evidence"><Icon name="lock" /><p>{selectedClaim.evidence || 'No evidence text was supplied.'}</p></div>
             </Card>
           </div>
           <div className="review-column">
@@ -2439,11 +3483,10 @@ function AdminClaim({ go }: { go: (s: Screen) => void }) {
                 <Badge tone="green">KSIT VERIFIED</Badge>
               </div>
               <div className="claimant-profile">
-                <div className="avatar large">RK</div>
+                <div className="avatar large">CL</div>
                 <div>
-                  <div className="admin-card-title">Rahul Kumar</div>
-                  <span>1KS23CS001</span>
-                  <p>Computer Science &amp; Engineering • 7th Semester</p>
+                  <div className="admin-card-title">{claimant?.name ?? 'Claimant'}</div>
+                  <span>{claimant?.email ?? `User ${selectedClaim.userId}`}</span>
                 </div>
               </div>
             </Card>
@@ -2470,12 +3513,10 @@ function AdminClaim({ go }: { go: (s: Screen) => void }) {
                 </div>
               ))}
               <div className="decision-actions">
-                <Button onClick={() => go("admin-handover")}>
-                  APPROVE CLAIM
-                </Button>
-                <Button variant="danger" onClick={() => setRejectDialog(true)}>
-                  REJECT CLAIM
-                </Button>
+                {selectedClaim.status === 'PENDING' && <>
+                  <Button onClick={() => void reviewClaim('APPROVED')}>{saving ? 'SAVING...' : 'APPROVE CLAIM'}</Button>
+                  <Button variant="danger" onClick={() => setRejectDialog(true)}>REJECT CLAIM</Button>
+                </>}
               </div>
             </Card>
             <Card className="finder-card">
@@ -2486,16 +3527,17 @@ function AdminClaim({ go }: { go: (s: Screen) => void }) {
               <div className="claimant-profile small">
                 <div className="avatar">AP</div>
                 <div>
-                  <strong>Aman Prakash</strong>
-                  <span>1KS22EC014 • ECE</span>
+                  <strong>{reviewItem?.reporter?.name ?? 'Listing reporter'}</strong>
+                  <span>{reviewItem?.reporter?.email ?? 'Reporter details unavailable'}</span>
                 </div>
               </div>
-              <Button variant="secondary" icon="message">
-                CONTACT FINDER
-              </Button>
+              {reporterEmail && <Button variant="secondary" icon="message" onClick={() => { window.location.href = `mailto:${reporterEmail}` }}>
+                CONTACT REPORTER
+              </Button>}
             </Card>
           </div>
         </div>
+        )}
       </div>
       {rejectDialog && (
         <Modal
@@ -2505,7 +3547,7 @@ function AdminClaim({ go }: { go: (s: Screen) => void }) {
           action="REJECT CLAIM"
           destructive
           onClose={() => setRejectDialog(false)}
-          onAction={() => setRejectDialog(false)}
+          onAction={() => { void reviewClaim('REJECTED') }}
         />
       )}
     </AdminLayout>
@@ -2513,7 +3555,39 @@ function AdminClaim({ go }: { go: (s: Screen) => void }) {
 }
 
 function AdminHandover({ go }: { go: (s: Screen) => void }) {
-  const [complete, setComplete] = useState(false)
+  const [claims, setClaims] = useState<ClaimDto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  const loadClaims = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await getAdminClaims()
+      setClaims(data.filter((claim) => claim.status === 'APPROVED'))
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load approved claims.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadClaims() }, [])
+
+  const verifyHandover = async (claimId: string) => {
+    setSavingId(claimId)
+    setError('')
+    try {
+      await completeHandover(claimId)
+      setClaims((current) => current.filter((claim) => claim.id !== claimId))
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Unable to confirm handover.')
+    } finally {
+      setSavingId(null)
+    }
+  }
+
   return (
     <AdminLayout
       current="admin-handover"
@@ -2522,77 +3596,38 @@ function AdminHandover({ go }: { go: (s: Screen) => void }) {
       subtitle="Coordinate and verify secure item collections"
     >
       <div className="admin-content">
+        {error && <div className="form-error">{error}</div>}
         <div className="handover-metrics">
           <Card>
-            <strong>8</strong>
-            <span>Scheduled today</span>
+            <strong>{claims.length}</strong>
+            <span>Awaiting collection</span>
           </Card>
           <Card>
-            <strong>3</strong>
-            <span>Waiting now</span>
+            <strong>{loading ? '—' : claims.length}</strong>
+            <span>Approved claims</span>
           </Card>
           <Card>
-            <strong>41</strong>
+            <strong>—</strong>
             <span>Completed this month</span>
           </Card>
         </div>
         <div className="handover-admin-grid">
-          <Card className="handover-admin-card">
-            <div className="handover-time">
-              <strong>1:30</strong>
-              <span>
-                PM
-                <br />
-                TODAY
-              </span>
-            </div>
-            <ItemVisual kind="airpods" />
-            <div className="handover-admin-copy">
-              <Badge tone={complete ? "green" : "blue"}>
-                {complete ? "COMPLETED" : "READY FOR COLLECTION"}
-              </Badge>
-              <div className="admin-card-title">White AirPods Pro</div>
-              <span>
-                Owner: <strong>Rahul Kumar</strong> • 1KS23CS001
-              </span>
-              <span>
-                <Icon name="pin" size="sm" /> KSIT Lost &amp; Found Desk
-              </span>
-            </div>
-            <div className="code-block">
-              <span>HANDOVER CODE</span>
-              <strong>739281</strong>
-            </div>
-            <Button wide={false} onClick={() => setComplete(true)}>
-              {complete ? "HANDOVER COMPLETED ✓" : "VERIFY HANDOVER"}
-            </Button>
-          </Card>
-          <Card className="handover-admin-card">
-            <div className="handover-time">
-              <strong>3:00</strong>
-              <span>
-                PM
-                <br />
-                TODAY
-              </span>
-            </div>
-            <ItemVisual kind="backpack" />
-            <div className="handover-admin-copy">
-              <Badge tone="blue">READY FOR COLLECTION</Badge>
-              <div className="admin-card-title">Black Backpack</div>
-              <span>
-                Owner: <strong>Sneha Rao</strong> • 1KS24IS022
-              </span>
-              <span>
-                <Icon name="pin" size="sm" /> Security Office
-              </span>
-            </div>
-            <div className="code-block">
-              <span>HANDOVER CODE</span>
-              <strong>104582</strong>
-            </div>
-            <Button wide={false}>VERIFY HANDOVER</Button>
-          </Card>
+          {loading ? <div className="loading-lines"><span /><span /><span /></div> : claims.length === 0 ? (
+            <Card className="empty-state"><strong>No pending handovers</strong><span>Approved claims appear here until staff confirms collection.</span></Card>
+          ) : claims.map((claim) => (
+            <Card className="handover-admin-card" key={claim.id}>
+              <ItemVisual kind="airpods" />
+              <div className="handover-admin-copy">
+                <Badge tone="blue">READY FOR COLLECTION</Badge>
+                <div className="admin-card-title">{claim.itemTitle}</div>
+                <span>Claim #{claim.id}</span>
+                <span><Icon name="pin" size="sm" /> KSIT Lost &amp; Found Desk</span>
+              </div>
+              <Button wide={false} onClick={() => void verifyHandover(claim.id)}>
+                {savingId === claim.id ? 'SAVING...' : 'VERIFY HANDOVER'}
+              </Button>
+            </Card>
+          ))}
         </div>
       </div>
     </AdminLayout>
@@ -2600,14 +3635,26 @@ function AdminHandover({ go }: { go: (s: Screen) => void }) {
 }
 
 function Analytics({ go }: { go: (s: Screen) => void }) {
-  const categories = [
-    ["ID Cards", 84],
-    ["Electronics", 72],
-    ["Books", 58],
-    ["Bags", 45],
-    ["Keys", 38],
-    ["Chargers", 28],
-  ]
+  const [items, setItems] = useState<ItemDto[]>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    getAdminItems()
+      .then(setItems)
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Unable to load analytics.'))
+  }, [])
+
+  const categoryCounts = Object.entries(items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.category] = (counts[item.category] ?? 0) + 1
+    return counts
+  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 6)
+  const locationCounts = Object.entries(items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.location] = (counts[item.location] ?? 0) + 1
+    return counts
+  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 6)
+  const maximumCategory = Math.max(1, ...categoryCounts.map(([, count]) => count))
+  const maximumLocation = Math.max(1, ...locationCounts.map(([, count]) => count))
+  const locationTotal = (name: string) => items.filter((item) => item.location.toLowerCase().includes(name.toLowerCase())).length
   return (
     <AdminLayout
       current="analytics"
@@ -2616,6 +3663,7 @@ function Analytics({ go }: { go: (s: Screen) => void }) {
       subtitle="Administrative insights • Current semester"
     >
       <div className="admin-content">
+        {error && <div className="form-error">{error}</div>}
         <div className="analytics-head">
           <div className="privacy-inline">
             <Icon name="shield" size="sm" />
@@ -2634,15 +3682,15 @@ function Analytics({ go }: { go: (s: Screen) => void }) {
               </div>
             </div>
             <div className="category-bars">
-              {categories.map(([label, value]) => (
+              {categoryCounts.map(([label, count]) => (
                 <div key={label}>
                   <span>{label}</span>
                   <div>
-                    <i style={{ width: `${value}%` }} />
+                    <i style={{ width: `${Math.round(count / maximumCategory * 100)}%` }} />
                   </div>
-                  <strong>{Math.round(Number(value) / 3)}</strong>
+                  <strong>{count}</strong>
                 </div>
-              ))}
+              ))}{categoryCounts.length === 0 && <div className="empty-state">No item analytics available.</div>}
             </div>
           </Card>
           <Card className="chart-card">
@@ -2653,23 +3701,16 @@ function Analytics({ go }: { go: (s: Screen) => void }) {
               </div>
             </div>
             <div className="location-list">
-              {[
-                "Library",
-                "Canteen",
-                "Academic Block",
-                "Parking",
-                "Classrooms",
-                "Sports Area",
-              ].map((location, index) => (
+              {locationCounts.map(([location, count], index) => (
                 <div key={location}>
                   <span>{index + 1}</span>
                   <strong>{location}</strong>
                   <div>
-                    <i style={{ width: `${92 - index * 12}%` }} />
+                    <i style={{ width: `${Math.round(count / maximumLocation * 100)}%` }} />
                   </div>
-                  <b>{26 - index * 3}</b>
+                  <b>{count}</b>
                 </div>
-              ))}
+              ))}{locationCounts.length === 0 && <div className="empty-state">No location analytics available.</div>}
             </div>
           </Card>
           <Card className="campus-map">
@@ -2688,22 +3729,22 @@ function Analytics({ go }: { go: (s: Screen) => void }) {
               <div className="map-road horizontal" />
               <div className="map-road vertical" />
               <div className="building main">
-                MAIN BLOCK<span className="heat heat-high">24</span>
+                MAIN BLOCK<span className="heat heat-high">{locationTotal('Main Block')}</span>
               </div>
               <div className="building library">
-                LIBRARY<span className="heat heat-hot">29</span>
+                LIBRARY<span className="heat heat-hot">{locationTotal('Library')}</span>
               </div>
               <div className="building canteen">
-                CANTEEN<span className="heat heat-hot">22</span>
+                CANTEEN<span className="heat heat-hot">{locationTotal('Canteen')}</span>
               </div>
               <div className="building academic">
-                ACADEMIC BLOCK<span className="heat heat-medium">18</span>
+                ACADEMIC BLOCK<span className="heat heat-medium">{locationTotal('Academic Block')}</span>
               </div>
               <div className="building parking">
-                PARKING<span className="heat heat-low">9</span>
+                PARKING<span className="heat heat-low">{locationTotal('Parking')}</span>
               </div>
               <div className="building sports">
-                SPORTS AREA<span className="heat heat-low">6</span>
+                SPORTS AREA<span className="heat heat-low">{locationTotal('Sports Area')}</span>
               </div>
             </div>
           </Card>
@@ -2735,16 +3776,23 @@ const screenLabels: Array<[Screen, string]> = [
   ["profile", "19 Profile"],
   ["admin", "20 Admin dashboard"],
   ["admin-items", "21 Admin items"],
-  ["admin-claim", "22 Claim review"],
-  ["admin-handover", "23 Handovers"],
-  ["analytics", "24 Analytics"],
-  ["privacy", "25 Privacy"],
+  ["admin-users", "22 Admin users"],
+  ["admin-claim", "23 Claim review"],
+  ["admin-handover", "24 Handovers"],
+  ["analytics", "25 Analytics"],
+  ["privacy", "26 Privacy"],
 ]
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("splash")
   const [navigatorOpen, setNavigatorOpen] = useState(false)
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null)
+  const [createdItemId, setCreatedItemId] = useState<string | null>(null)
   const [reportKind, setReportKind] = useState<"lost" | "found">("lost")
+  const [reportDraft, setReportDraft] = useState<ReportDraft>(emptyReportDraft)
+  const [submittingReport, setSubmittingReport] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
   const [feedbackState, setFeedbackState] =
     useState<"loading" | "error" | "empty" | null>(null)
 
@@ -2753,46 +3801,144 @@ export default function App() {
     setNavigatorOpen(false)
   }, [screen])
 
-  const go = (next: Screen) => setScreen(next)
+  useEffect(() => {
+    if (!getAuthToken()) return
+    let active = true
+    getCurrentUser()
+      .then(() => {
+        if (active) setScreen("home")
+      })
+      .catch(() => {
+        clearAuthToken()
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const go = (next: Screen) => {
+    if (next === "lost-item") setReportKind("lost")
+    if (next === "found") setReportKind("found")
+    if (next !== "review" && next !== "found" && next !== "lost-item" && next !== "lost-details") {
+      setReportError(null)
+    }
+    setScreen(next)
+  }
+
+  const selectItem = (id: string) => {
+    setSelectedItemId(id)
+    go("item")
+  }
+
+  const handleClaimSubmitted = (id: string) => {
+    setSelectedClaimId(id)
+    go("claim")
+  }
+
+  const selectClaim = (id: string) => {
+    setSelectedClaimId(id)
+    go("claim")
+  }
+
+  const handleReportSubmit = async () => {
+    const itemName = reportDraft.itemName.trim()
+    const category = reportDraft.category.trim()
+    const location = reportDraft.location.trim()
+    const description = reportDraft.description.trim()
+
+    if (!itemName || !category || !location || !description || !reportDraft.date || !reportDraft.time) {
+      setReportError("Please complete the category, item name, date, time, location, and description.")
+      return
+    }
+
+    setSubmittingReport(true)
+    setReportError(null)
+
+    try {
+      const itemDate = `${reportDraft.date}T${reportDraft.time}:00`
+
+      const createdItem = await createItem({
+        title: itemName,
+        description,
+        category,
+        brand: reportDraft.brand.trim() || undefined,
+        color: reportDraft.color.trim() || undefined,
+        location,
+        custodyLocation: reportKind === "found" ? reportDraft.currentLocation : undefined,
+        itemDate,
+        itemType: reportKind === "found" ? "FOUND" : "LOST",
+        status: reportKind === "found" ? "FOUND" : "LOST",
+        privateDetails: reportDraft.privateDetails || "",
+        imageUrls: reportDraft.imageUrls,
+      })
+
+      setCreatedItemId(createdItem.id)
+      setSelectedItemId(createdItem.id)
+      setReportDraft(emptyReportDraft)
+      setReportError(null)
+      go("success")
+    } catch (error) {
+      setReportError(
+        error instanceof Error ? error.message : "Unable to submit report.",
+      )
+    } finally {
+      setSubmittingReport(false)
+    }
+  }
+
   const screens: Record<Screen, ReactNode> = {
     splash: <Splash go={go} />,
     login: <Login go={go} />,
-    home: <Home go={go} />,
-    search: <SearchScreen go={go} />,
-    "lost-item": <ReportLostItem go={go} />,
-    "lost-details": <LostDetails go={go} />,
+    home: <Home go={go} onSelectItem={selectItem} />,
+    search: <SearchScreen go={go} onSelectItem={selectItem} />,
+    "lost-item": (
+      <ReportLostItem
+        go={go}
+        draft={reportDraft}
+        setDraft={setReportDraft}
+      />
+    ),
+    "lost-details": (
+      <LostDetails
+        go={go}
+        draft={reportDraft}
+        setDraft={setReportDraft}
+      />
+    ),
     review: (
       <Review
         go={go}
-        onSubmit={() => {
-          setReportKind("lost")
-          go("success")
-        }}
+        draft={reportDraft}
+        onSubmit={handleReportSubmit}
+        submitting={submittingReport}
+        error={reportError}
       />
     ),
-    success: <Success go={go} kind={reportKind} />,
+    success: <Success go={go} kind={reportKind} itemId={createdItemId} />,
     found: (
       <FoundForm
         go={go}
-        onSubmit={() => {
-          setReportKind("found")
-          go("success")
-        }}
+        draft={reportDraft}
+        setDraft={setReportDraft}
+        onSubmit={handleReportSubmit}
+        submitting={submittingReport}
+        error={reportError}
       />
     ),
-    item: <ItemDetails go={go} />,
-    match: <Match go={go} />,
-    verify: <Verify go={go} />,
-    claim: <ClaimStatus go={go} />,
-    chat: <Chat go={go} />,
-    handover: <Handover go={go} />,
-    returned: <Returned go={go} />,
-    reports: <Reports go={go} />,
-    notifications: <Notifications go={go} />,
+    item: <ItemDetails go={go} itemId={selectedItemId} />,
+    match: <Match go={go} itemId={selectedItemId} onSelectItem={selectItem} />,
+    verify: <Verify go={go} itemId={selectedItemId} onSubmitted={handleClaimSubmitted} />,
+    claim: <ClaimStatus go={go} claimId={selectedClaimId} />,
+    chat: <Chat go={go} claimId={selectedClaimId} />,
+    handover: <Handover go={go} claimId={selectedClaimId} />,
+    returned: <Returned go={go} claimId={selectedClaimId} />,
+    reports: <Reports go={go} onSelectItem={selectItem} onSelectClaim={selectClaim} />,
+    notifications: <Notifications go={go} onOpenItem={selectItem} />,
     profile: <Profile go={go} />,
     privacy: <Privacy go={go} />,
     admin: <AdminDashboard go={go} />,
     "admin-items": <AdminItems go={go} />,
+    "admin-users": <AdminUsers go={go} />,
     "admin-claim": <AdminClaim go={go} />,
     "admin-handover": <AdminHandover go={go} />,
     analytics: <Analytics go={go} />,

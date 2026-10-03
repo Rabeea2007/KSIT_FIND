@@ -1,0 +1,3 @@
+ALTER TABLE items
+    ADD COLUMN brand VARCHAR(100),
+    ADD COLUMN color VARCHAR(100);
