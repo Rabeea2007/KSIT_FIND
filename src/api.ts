@@ -1,6 +1,10 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
-const API_ROOT = API_BASE_URL.replace(/\/+$/, '')
-const API_ORIGIN = API_ROOT.replace(/\/api$/, '')
+import { Capacitor } from '@capacitor/core'
+
+const DEFAULT_API_BASE_URL = Capacitor.getPlatform() === 'android'
+  ? 'http://10.0.2.2:8080/api'
+  : 'http://localhost:8080/api'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL?.trim() || DEFAULT_API_BASE_URL).replace(/\/+$/, '')
+const API_ORIGIN = new URL(API_BASE_URL).origin
 
 export type UserDto = {
   id: string
@@ -79,7 +83,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
-        `Cannot connect to the KSIT FIND API at ${API_BASE_URL}. Start the Spring Boot backend and make sure its CORS configuration allows this frontend address.`,
+        `The KSIT FIND API at ${API_BASE_URL} could not be reached. Check that Spring Boot is running and reachable from this device; browser requests may also be blocked if the backend CORS allow-list does not include this app's origin.`,
       )
     }
     throw error

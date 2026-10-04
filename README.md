@@ -19,17 +19,21 @@ React/Vite UI -> Spring Boot REST API -> PostgreSQL
 
 1. Install Node.js 22, Java 21, Maven, and PostgreSQL.
 2. Create a PostgreSQL database named `ksit_find`.
-3. Copy `.env.example` to `.env` for Vite's `VITE_API_BASE_URL`. Spring Boot reads its settings from process environment variables (it does not load the Vite `.env` file).
+3. Copy `.env.example` to `.env` if you need a frontend API override. By default the app uses `http://localhost:8080/api` in a browser and `http://10.0.2.2:8080/api` in the Android Emulator. Spring Boot reads its settings from process environment variables (it does not load the Vite `.env` file).
 4. In the PowerShell window used to start the backend, set:
 
 ```powershell
 $env:DB_URL = "jdbc:postgresql://localhost:5432/ksit_find"
 $env:DB_USERNAME = "postgres"
 $env:DB_PASSWORD = "<your-local-postgres-password>"
-$env:JWT_SECRET = "<random-secret-with-at-least-32-bytes>"
+$jwtBytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($jwtBytes)
+$rng.Dispose()
+$env:JWT_SECRET = [Convert]::ToBase64String($jwtBytes)
 $env:JWT_EXPIRATION_MS = "86400000"
 $env:APP_STORAGE_ROOT_DIR = "./uploads"
-$env:APP_CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:4173"
+$env:APP_CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:4173,https://localhost,http://localhost,capacitor://localhost"
 ```
 
 5. Start the backend; Flyway applies the schema migrations at startup:
@@ -45,6 +49,19 @@ mvn spring-boot:run
 npm install
 npm run dev
 ```
+
+### Android Emulator
+
+Install Android Studio and its Android SDK, then from the project root run:
+
+```powershell
+npm run build
+npx cap sync android
+Set-Location android
+.\gradlew.bat assembleDebug
+```
+
+The packaged Capacitor app uses `http://10.0.2.2:8080/api` to reach the host computer's Spring Boot server. Debug builds allow cleartext and mixed-scheme WebView requests for this local-development HTTP API; release builds do not relax WebView mixed-content security, so configure HTTPS before producing a release. The backend CORS allow-list includes the Capacitor WebView origins used in development. To override the API root, set `VITE_API_BASE_URL` before building (it must include `/api`).
 
 For local demo accounts and sample reports only, start the backend with the `demo` profile (`mvn spring-boot:run "-Dspring-boot.run.profiles=demo"`). The demo profile seeds:
 
@@ -64,7 +81,7 @@ Do not use these demo credentials outside a local development database. Without 
 | `JWT_EXPIRATION_MS` | Token lifetime in milliseconds |
 | `APP_STORAGE_ROOT_DIR` | Filesystem directory for uploaded images |
 | `APP_CORS_ALLOWED_ORIGINS` | Comma-separated frontend origins |
-| `VITE_API_BASE_URL` | Frontend API root, normally `http://localhost:8080/api` |
+| `VITE_API_BASE_URL` | Optional frontend API root override (include `/api`); defaults per platform |
 
 Never commit a real `.env` file or production secrets. Uploaded image files are stored outside PostgreSQL; item/profile records retain their URLs.
 

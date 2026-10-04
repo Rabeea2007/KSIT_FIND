@@ -23,8 +23,10 @@ public class JwtService {
 
     @PostConstruct
     void validateConfiguration() {
-        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
-            throw new IllegalStateException("JWT_SECRET must contain at least 32 bytes");
+        if (secret == null || secret.isBlank() || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException(
+                "JWT_SECRET is required and must contain at least 32 bytes. Set it as an environment variable before starting the backend."
+            );
         }
         if (expirationMs <= 0) {
             throw new IllegalStateException("JWT_EXPIRATION_MS must be positive");
